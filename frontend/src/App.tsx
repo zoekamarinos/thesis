@@ -1,28 +1,30 @@
-// NurbsSurface.jsx
-//
-// Fetches the fitted NURBS surface from the Flask backend (server.py)
-// and renders it with three.js: cyan/magenta isocurves, surface as a
-// point cloud, and the original data points in red — matching the
-// original matplotlib script's visualization.
-//
-// npm install three
-
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 // import BezierPatchBuilder from './BezierPatchBuilder.tsx';
 
-const API_URL = "http://localhost:5000/surface";
+const API_BASE = "http://localhost:5000";
+
+const SHAPE_OPTIONS = [
+  { value: "saddle", label: "Saddle" },
+  { value: "curved_plate", label: "Curved plate" },
+  { value: "dome", label: "Dome" },
+  { value: "cylinder", label: "Cylinder" },
+];
 
 export default function NurbsSurface() {
   const mountRef = useRef(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [shape, setShape] = useState("saddle");
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer, scene: THREE.Scene<THREE.Object3DEventMap>, camera: THREE.Camera, frameId: number, controls: OrbitControls;
 
-    fetch(API_URL)
+    setLoading(true);
+    setError(null);
+
+    fetch(`${API_BASE}/surface?shape=${shape}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Request failed: ${res.status}`);
         return res.json();
@@ -37,19 +39,20 @@ export default function NurbsSurface() {
         scene.background = new THREE.Color(0x111111);
 
         camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-        camera.position.set(20, 20, 20);
+        camera.position.set(5, 5, 5);
         camera.lookAt(0, 0, 0);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(width, height);
+        mountRef.current.innerHTML = "";
         mountRef.current.appendChild(renderer.domElement);
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
-        scene.add(new THREE.AxesHelper(10));
+        scene.add(new THREE.AxesHelper(5));
 
-        // Helper to build a colored point cloud from an array of [x, y, z]
+        // Helper to build a colored point cloud
         const addPoints = (pts: any[], color: number, size: number) => {
           const geo = new THREE.BufferGeometry();
           const flat = new Float32Array(pts.flat());
@@ -58,7 +61,7 @@ export default function NurbsSurface() {
           scene.add(new THREE.Points(geo, mat));
         };
 
-        // Helper to build a colored line from an array of [x, y, z]
+        // Helper to build a colored line
         const addLine = (pts: any[], color: number) => {
           const geo = new THREE.BufferGeometry();
           const flat = new Float32Array(pts.flat());
@@ -67,15 +70,15 @@ export default function NurbsSurface() {
           scene.add(new THREE.Line(geo, mat));
         };
 
-        // Fitted surface as a point cloud (cyan-ish, matches evalpts scatter)
-        addPoints(evalpts, 0x00bcd4, 0.25);
+        // Fitted surface as a point cloud
+        addPoints(evalpts, 0x00bcd4, 0.05);
 
-        // Original input data points (red, matches the scatter in the script)
-        addPoints(datapts, 0xff3b30, 0.6);
+        // Original input data points
+        addPoints(datapts, 0xff3b30, 0.08);
 
-        // Optional: u/v isocurves extracted from the surface
-        if (uCurvePts) addLine(uCurvePts, 0x00ffff); // cyan
-        if (vCurvePts) addLine(vCurvePts, 0xff00ff); // magenta
+        // u/v isocurves extracted from the surface
+        if (uCurvePts) addLine(uCurvePts, 0x00ffff);
+        if (vCurvePts) addLine(vCurvePts, 0xff00ff);
 
         const animate = () => {
           frameId = requestAnimationFrame(animate);
@@ -99,10 +102,27 @@ export default function NurbsSurface() {
         }
       }
     };
-  }, []);
+  }, [shape]);
 
   return (
     <div>
+      <div style={{ marginBottom: 8 }}>
+        <label htmlFor="shape-select" style={{ marginRight: 8 }}>
+          Shape:
+        </label>
+        <select
+          id="shape-select"
+          value={shape}
+          onChange={(e) => setShape(e.target.value)}
+        >
+          {SHAPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {loading && <p>Loading surface…</p>}
       {error && <p style={{ color: "red" }}>Failed to load surface: {error}</p>}
       <div ref={mountRef} style={{ width: "100%", height: 600 }} />
