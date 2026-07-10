@@ -10,12 +10,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^9.2.0",
     "flask": "^0.2.10",
     "plotly.js": "^3.6.0",
     "plotly.js-dist-min": "^3.6.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-plotly.js": "^3.0.0",
+    "react-router-dom": "^7.18.1",
     "three": "^0.184.0"
   },
   "devDependencies": {
