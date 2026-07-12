@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 const API_BASE = "http://localhost:5000";
-
 interface Patch {
   evalpts: number[][];
   datapts: number[][];
@@ -10,18 +9,13 @@ interface Patch {
   uCurvePts?: number[][];
   vCurvePts?: number[][];
 }
-
 interface CloudsProps {
   method: string;
-  shape: string;
-  noise: boolean;
   file: File | null;
 }
 
 export default function Clouds({
   method,
-  shape,
-  noise,
   file
 }: CloudsProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -35,12 +29,7 @@ export default function Clouds({
     const generate = async () => {
       if (!mountRef.current) return;
       const form = new FormData();
-      form.append("shape", shape);
       form.append("method", method);
-      form.append(
-        "noise",
-        String(noise)
-      );
 
       if (file) {
         form.append(
@@ -65,7 +54,7 @@ export default function Clouds({
       const width =
         mountRef.current.clientWidth || 300;
 
-      const height = 350;
+      const height = mountRef.current.clientHeight || 350;
 
       scene = new THREE.Scene();
       scene.background =
@@ -158,7 +147,6 @@ export default function Clouds({
             })
           )
         );
-
       };
 
       const colors = [
@@ -235,8 +223,6 @@ export default function Clouds({
     };
   }, [
     method,
-    shape,
-    noise,
     file
   ]);
 
@@ -245,7 +231,7 @@ export default function Clouds({
       ref={mountRef}
       style={{
         width: "100%",
-        height: 350,
+        height: "100%",
       }}
     />
   );

@@ -6,8 +6,6 @@ import Box from "@mui/material/Box";
 import Clouds from "./Clouds";
 
 interface TabPanelComponentProps {
-  shape: string;
-  noise: boolean;
   file: File | null;
 }
 
@@ -45,14 +43,10 @@ function a11yProps(index: number) {
 }
 
 export default function TabPanel({
-  shape,
-  noise,
   file,
 }: TabPanelComponentProps) {
-
   const [value, setValue] = useState(0);
   const [method, setMethod] = useState("approximate");
-
 
   const handleChange = (
     _: React.SyntheticEvent,
@@ -68,23 +62,19 @@ export default function TabPanel({
     }
   };
 
-
   return (
     <Box sx={{ width: "100%" }}>
-
       <Box
         sx={{
           borderBottom: 1,
           borderColor: "divider"
         }}
       >
-
         <Tabs
           value={value}
           onChange={handleChange}
           aria-label="surface method tabs"
         >
-
           <Tab
             label="Approximation"
             sx={{
@@ -93,8 +83,6 @@ export default function TabPanel({
             }}
             {...a11yProps(0)}
           />
-
-
           <Tab
             label="Interpolation"
             sx={{
@@ -103,38 +91,26 @@ export default function TabPanel({
             }}
             {...a11yProps(1)}
           />
-
         </Tabs>
-
       </Box>
-
-
       <CustomTabPanel
         value={value}
         index={0}
       >
         <Clouds
           method={method}
-          shape={shape}
-          noise={noise}
           file={file}
         />
       </CustomTabPanel>
-
-
       <CustomTabPanel
         value={value}
         index={1}
       >
         <Clouds
           method={method}
-          shape={shape}
-          noise={noise}
           file={file}
         />
       </CustomTabPanel>
-
-
     </Box>
   );
 }
