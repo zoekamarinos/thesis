@@ -5,94 +5,79 @@ import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
 import Clouds from "./Clouds";
 
-interface TabPanelComponentProps {
-  file: File | null;
-}
-
 interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
+  file:File|null;
+  exportFunction:any;
 }
 
-function CustomTabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
+function CustomTabPanel({
+  children,
+  value,
+  index
+}:{
+  children?:React.ReactNode;
+  value:number;
+  index:number;
+}) {
 
   return (
     <div
       role="tabpanel"
       hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
     >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
+      {
+        value === index &&
+        <Box sx={{p:1}}>
           {children}
         </Box>
-      )}
+      }
     </div>
   );
 }
 
-function a11yProps(index: number) {
+function a11yProps(index:number){
   return {
-    id: `simple-tab-${index}`,
-    "aria-controls": `simple-tabpanel-${index}`,
+    id:`simple-tab-${index}`,
+    "aria-controls":
+      `simple-tabpanel-${index}`
   };
 }
 
 export default function TabPanel({
   file,
-}: TabPanelComponentProps) {
-  const [value, setValue] = useState(0);
-  const [method, setMethod] = useState("approximate");
-
+  exportFunction
+}:TabPanelProps){
+  const [value,setValue] =
+    useState(0);
+  const [method,setMethod] =
+    useState("approximate");
   const handleChange = (
-    _: React.SyntheticEvent,
-    newValue: number
-  ) => {
-
+    _:React.SyntheticEvent,
+    newValue:number
+  )=>{
     setValue(newValue);
-
-    if (newValue === 0) {
-      setMethod("approximate");
-    } else {
-      setMethod("interpolate");
-    }
+    setMethod(
+      newValue === 0
+      ? "approximate"
+      : "interpolate"
+    );
   };
 
   return (
-    <Box sx={{ width: "100%" }}>
-      <Box
-        sx={{
-          borderBottom: 1,
-          borderColor: "divider"
-        }}
+    <Box sx={{width:"100%"}}>
+      <Tabs
+        value={value}
+        onChange={handleChange}
       >
-        <Tabs
-          value={value}
-          onChange={handleChange}
-          aria-label="surface method tabs"
-        >
-          <Tab
-            label="Approximation"
-            sx={{
-              fontFamily: "sans-serif",
-              color: "black"
-            }}
-            {...a11yProps(0)}
-          />
-          <Tab
-            label="Interpolation"
-            sx={{
-              fontFamily: "sans-serif",
-              color: "black"
-            }}
-            {...a11yProps(1)}
-          />
-        </Tabs>
-      </Box>
+        <Tab
+          label="Approximation"
+          {...a11yProps(0)}
+        />
+        <Tab
+          label="Interpolation"
+          {...a11yProps(1)}
+        />
+      </Tabs>
       <CustomTabPanel
         value={value}
         index={0}
@@ -100,6 +85,7 @@ export default function TabPanel({
         <Clouds
           method={method}
           file={file}
+          exportFunction={exportFunction}
         />
       </CustomTabPanel>
       <CustomTabPanel
@@ -109,6 +95,7 @@ export default function TabPanel({
         <Clouds
           method={method}
           file={file}
+          exportFunction={exportFunction}
         />
       </CustomTabPanel>
     </Box>
