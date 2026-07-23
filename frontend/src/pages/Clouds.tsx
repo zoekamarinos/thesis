@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -32,6 +32,17 @@ export default function Clouds({
 
   const mountRef = useRef<HTMLDivElement|null>(null);
   const patchesRef = useRef<Patch[]>([]);
+
+  // Only applies to raw point-cloud imports. Files re-imported from a
+  // previous export (containing "# NURBS PATCH" markers) always rebuild
+  // with the exact patch count they were exported with, regardless of
+  // this value — the backend ignores it for that path.
+  // Blank = the file's natural patch count. A number lower than that
+  // merges patches together; a number higher splits them further.
+  const [totalPatches, setTotalPatches] = useState<string>("");
+
+  const [error, setError] = useState<string|null>(null);
+  const [loading, setLoading] = useState(false);
 
   const exportSurface = () => {
     if(patchesRef.current.length === 0) return;
@@ -82,25 +93,57 @@ export default function Clouds({
     let renderer:THREE.WebGLRenderer;
     let controls:OrbitControls;
     let scene:THREE.Scene;
+    let cancelled = false;
 
     const generate = async()=>{
 
       if(!mountRef.current || !file) return;
+
+      setError(null);
+      setLoading(true);
 
       const form = new FormData();
 
       form.append("method",method);
       form.append("file",file);
 
-      const res = await fetch(
-        `${API_BASE}/surface`,
-        {
-          method:"POST",
-          body:form
-        }
-      );
+      if(totalPatches.trim() !== ""){
+        form.append("totalPatches",totalPatches.trim());
+      }
 
-      const json = await res.json();
+      let json:any;
+
+      try{
+
+        const res = await fetch(
+          `${API_BASE}/surface`,
+          {
+            method:"POST",
+            body:form
+          }
+        );
+
+        json = await res.json();
+
+      }catch(e){
+
+        if(!cancelled){
+          setError("No. Patches not valid");
+          setLoading(false);
+        }
+
+        return;
+      }
+
+      if(cancelled) return;
+
+      if(json.error){
+        setError(json.error);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
 
       const patches:Patch[] =
         json.patches ?? [];
@@ -110,7 +153,7 @@ export default function Clouds({
       const width =
         mountRef.current.clientWidth || 500;
 
-      const height = 400;
+      const height = 500;
 
       scene = new THREE.Scene();
 
@@ -285,6 +328,7 @@ export default function Clouds({
     generate();
 
     return ()=>{
+      cancelled = true;
       cancelAnimationFrame(frameId);
       controls?.dispose();
       renderer?.dispose();
@@ -294,16 +338,48 @@ export default function Clouds({
     };
   },[
     method,
-    file
+    file,
+    totalPatches
   ]);
 
   return (
-    <div
-      ref={mountRef}
-      style={{
-        width:"100%",
-        height:400
-      }}
-    />
+    <div>
+      <div
+        style={{
+          display:"flex",
+          gap:"16px",
+          alignItems:"center",
+          marginBottom:"8px"
+        }}
+      >
+        <label>
+          Number of patches:
+          <input
+            type="number"
+            min={1}
+            placeholder="auto"
+            value={totalPatches}
+            onChange={e=>setTotalPatches(e.target.value)}
+            style={{ marginLeft:"6px", width:"70px" }}
+          />
+        </label>
+
+        {loading && <span>Generating surface…</span>}
+      </div>
+
+      {error && (
+        <div style={{ color:"#ff6b6b", marginBottom:"8px" }}>
+          {error}
+        </div>
+      )}
+
+      <div
+        ref={mountRef}
+        style={{
+          width:"100%",
+          height:500
+        }}
+      />
+    </div>
   );
 }

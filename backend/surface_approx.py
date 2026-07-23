@@ -155,6 +155,138 @@ def find_grid_size(n):
 
     return best
 
+def near_square_factors(n):
+    """
+    Return (u, v) with u * v == n, as close to a square split as possible.
+    Used to turn a single "how many sub-patches for this block" count into
+    a 2D split for split_grid.
+    """
+
+    if n <= 1:
+        return (1, 1)
+
+    best = (n, 1)
+    diff = n - 1
+
+    for i in range(1, int(math.sqrt(n)) + 1):
+
+        if n % i == 0:
+
+            j = n // i
+
+            if abs(i - j) < diff:
+                best = (j, i)
+                diff = abs(i - j)
+
+    return best
+
+def distribute_counts(n, total):
+    """
+    Split `total` items as evenly as possible across `n` buckets.
+    Returns a list of length n whose values sum to `total`.
+    """
+
+    base = total // n
+    extra = total % n
+
+    return [
+        base + (1 if i < extra else 0)
+        for i in range(n)
+    ]
+
+def split_indices(size, n):
+    """
+    Split `size` points (size-1 cells) along one axis into `n` pieces.
+    Returns a list of (start_idx, end_idx) index pairs, INCLUSIVE on both
+    ends, so adjacent pieces share their boundary row/column (this keeps
+    the resulting sub-surfaces stitched together with no visible seam).
+    """
+
+    total_cells = size - 1
+
+    if total_cells <= 0:
+        return [(0, 0)]
+
+    n = max(1, min(n, total_cells))
+
+    base = total_cells // n
+    extra = total_cells % n
+
+    bounds = []
+    start = 0
+
+    for i in range(n):
+
+        cells = base + (1 if i < extra else 0)
+        end = start + cells
+
+        bounds.append((start, end))
+
+        start = end
+
+    return bounds
+
+def split_grid(pts, size_u, size_v, patches_u, patches_v):
+    """
+    Cut a flat, row-major (u-major) point grid into a patches_u x patches_v
+    arrangement of overlapping sub-grids. Returns a list of
+    (sub_pts, sub_size_u, sub_size_v) tuples.
+    """
+
+    u_bounds = split_indices(size_u, patches_u)
+    v_bounds = split_indices(size_v, patches_v)
+
+    subgrids = []
+
+    for (u0, u1) in u_bounds:
+        for (v0, v1) in v_bounds:
+
+            sub_pts = []
+
+            for u in range(u0, u1 + 1):
+                for v in range(v0, v1 + 1):
+                    sub_pts.append(pts[u * size_v + v])
+
+            subgrids.append((
+                sub_pts,
+                u1 - u0 + 1,
+                v1 - v0 + 1
+            ))
+
+    return subgrids
+
+def merge_blocks(blocks, total_groups):
+    """
+    Merge a list of point-cloud blocks (each a list of [x,y,z] points) down
+    to `total_groups` groups by concatenating neighboring blocks together.
+    Used only when the user explicitly asks for fewer total patches than
+    there are # PATCH blocks in the raw import (e.g. 2 instead of the
+    sphere's natural 6). Concatenated points are then re-gridded and fit
+    as a single surface per group, same as any other point cloud.
+    """
+
+    n = len(blocks)
+    total_groups = max(1, min(total_groups, n))
+
+    base = n // total_groups
+    extra = n % total_groups
+
+    groups = []
+    idx = 0
+
+    for g in range(total_groups):
+
+        take = base + (1 if g < extra else 0)
+        merged = []
+
+        for _ in range(take):
+            merged.extend(blocks[idx])
+            idx += 1
+
+        groups.append(merged)
+
+    return groups
+
 def surface_json(surf, datapts, index):
 
     curves = construct.extract_curves(surf)
@@ -185,6 +317,19 @@ def surface():
     method = request.form.get(
         "method",
         "approximate"
+    )
+
+    # Only used for raw point-cloud imports. Re-imported NURBS exports
+    # (files with "# NURBS PATCH" markers) always rebuild exactly the
+    # patches they were exported with, so this is ignored for those.
+    # Blank/omitted = natural patch count for the file (1 per # PATCH
+    # block, or 1 total if the file has no blocks). A number lower than
+    # the natural block count merges blocks together; a number higher
+    # splits blocks further — either way the output is exactly that many
+    # patches.
+    total_raw = request.form.get("totalPatches", "")
+    total_patches = (
+        int(total_raw) if total_raw not in ("", None) else None
     )
 
     if not file:
@@ -228,7 +373,31 @@ def surface():
 
     else:
 
-        for index, pts in enumerate(parsed):
+        num_blocks = len(parsed)
+
+        if total_patches is None:
+            # No override: natural behavior, one patch per block.
+            blocks_to_process = [(pts, 1, 1) for pts in parsed]
+
+        elif total_patches <= num_blocks:
+            # Fewer patches requested than there are blocks: merge
+            # neighboring blocks together (e.g. sphere's 6 faces -> 2).
+            merged = merge_blocks(parsed, max(1, total_patches))
+            blocks_to_process = [(pts, 1, 1) for pts in merged]
+
+        else:
+            # More patches requested than there are blocks: split each
+            # block up, distributing the extra patches as evenly as
+            # possible across blocks so the total comes out exact.
+            per_block_targets = distribute_counts(num_blocks, total_patches)
+
+            blocks_to_process = []
+
+            for pts, block_target in zip(parsed, per_block_targets):
+                u, v = near_square_factors(max(1, block_target))
+                blocks_to_process.append((pts, u, v))
+
+        for pts, split_u, split_v in blocks_to_process:
 
             grid = find_grid_size(len(pts))
 
@@ -239,35 +408,61 @@ def surface():
 
             size_u, size_v = grid
 
-            if method == "approximate":
+            sub_iter = split_grid(pts, size_u, size_v, split_u, split_v)
 
-                surf = fitting.approximate_surface(
-                    pts,
-                    size_u,
-                    size_v,
-                    min(DEGREE_U,size_u-1),
-                    min(DEGREE_V,size_v-1)
+            for sub_pts, sub_u, sub_v in sub_iter:
+
+                du = min(DEGREE_U, sub_u - 1)
+                dv = min(DEGREE_V, sub_v - 1)
+
+                if du < 1 or dv < 1:
+                    return jsonify({
+                        "error": (
+                            "Requested patch count is too high for this "
+                            "grid — a sub-patch ended up with fewer than "
+                            "2 points along one axis. Lower the total "
+                            "patch count."
+                        )
+                    })
+
+                if method == "approximate":
+
+                    # geomdl defaults ctrlpts_size to (size - 1) when not
+                    # given, i.e. it reduces control points below the data
+                    # point count. On small sub-patches that reduced count
+                    # can end up equal to the degree, which divides by zero
+                    # in geomdl's knot vector calc. Passing the sizes
+                    # explicitly (matching the data point count) avoids
+                    # that reduction and keeps ctrlpts_size > degree.
+                    surf = fitting.approximate_surface(
+                        sub_pts,
+                        sub_u,
+                        sub_v,
+                        du,
+                        dv,
+                        ctrlpts_size_u=sub_u,
+                        ctrlpts_size_v=sub_v
+                    )
+
+                else:
+
+                    surf = fitting.interpolate_surface(
+                        sub_pts,
+                        sub_u,
+                        sub_v,
+                        du,
+                        dv
+                    )
+
+                surf.delta = 0.02
+
+                results.append(
+                    surface_json(
+                        surf,
+                        sub_pts,
+                        len(results)
+                    )
                 )
-
-            else:
-
-                surf = fitting.interpolate_surface(
-                    pts,
-                    size_u,
-                    size_v,
-                    min(DEGREE_U,size_u-1),
-                    min(DEGREE_V,size_v-1)
-                )
-
-            surf.delta = 0.02
-
-            results.append(
-                surface_json(
-                    surf,
-                    pts,
-                    index
-                )
-            )
 
     print("Returned patches:", len(results))
 

@@ -1,8 +1,5 @@
-// import { useRef, useState } from "react";
-import { Box, Typography, Button } from '@mui/material';
-// const API_BASE = "http://localhost:5000";
+import { Box, Typography } from '@mui/material';
 import "./Home.css";
-// import logo1 from "../assets/logo1.svg";
 import logo from "../assets/logo.svg";
 import { useNavigate } from 'react-router-dom';
 
