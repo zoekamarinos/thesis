@@ -303,6 +303,9 @@ def surface_json(surf, datapts, index):
         "size_u": surf.ctrlpts_size_u,
         "size_v": surf.ctrlpts_size_v,
 
+        "sample_size_u": surf.sample_size_u,
+        "sample_size_v": surf.sample_size_v,
+
         "knot_u": surf.knotvector_u,
         "knot_v": surf.knotvector_v,
 

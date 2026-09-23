@@ -3,13 +3,17 @@ import { Box, Typography } from "@mui/material";
 import "./Dash.css";
 import logo from "../assets/small-logo1.svg";
 import TabPanel from "./TabPanel";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from "react-router-dom";
 
 export default function Dash() {
   const navigate = useNavigate();
-  const [file, setFile] = useState<File | null>(null);
+
+  const [file, setFile] =
+    useState<File | null>(null);
+
   const exportFunction =
     useRef<(() => void) | null>(null);
+
   const handleFile = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -19,45 +23,59 @@ export default function Dash() {
   };
 
   return (
-    <Box className="page">
-      <Box className="side-bar">
+    <Box
+      className="page"
+    >
+      {/* SIDEBAR */}
+      <Box
+        className="side-bar"
+      >
         <img
           src={logo}
           alt="Logo-small"
           style={{
-            paddingTop:"15px"
+            paddingTop: "15px",
           }}
         />
-        <Box sx={{paddingTop:"20px"}}>
+
+        <Box
+          sx={{
+            paddingTop: "20px",
+          }}
+        >
           <div className="home">
             Home
           </div>
         </Box>
+
         <Typography
           sx={{
-            color:"white",
-            paddingTop:"25px",
-            cursor:"pointer"
+            color: "white",
+            paddingTop: "25px",
+            cursor: "pointer",
           }}
         >
           History
         </Typography>
+
         <Typography
           onClick={() =>
-            navigate('/')
+            navigate("/")
           }
           sx={{
-            color:"white",
-            paddingTop:"25px",
-            cursor:"pointer"
+            color: "white",
+            paddingTop: "25px",
+            cursor: "pointer",
           }}
         >
           Log out
         </Typography>
+
+        {/* Push user section to bottom */}
         <Box
           sx={{
-            marginTop:"auto",
-            paddingBottom:"15px"
+            marginTop: "auto",
+            paddingBottom: "15px",
           }}
         >
           <div className="user">
@@ -65,28 +83,37 @@ export default function Dash() {
           </div>
         </Box>
       </Box>
-      <Box className="content">
+
+      {/* MAIN CONTENT */}
+      <Box
+        className="content"
+      >
+        {/* HEADER */}
         <Box className="header">
           <Typography
             variant="h4"
             sx={{
-              color:"black",
-              paddingLeft:"75px"
+              color: "black",
+              paddingLeft: "75px",
             }}
           >
-            Cloud Studio
+            CloudStudio
           </Typography>
+
           <Box className="header-btns">
             <div
               className="import"
               onClick={() =>
                 document
-                .getElementById("fileInput")
-                ?.click()
+                  .getElementById(
+                    "fileInput"
+                  )
+                  ?.click()
               }
             >
               Import
             </div>
+
             <input
               id="fileInput"
               type="file"
@@ -94,10 +121,11 @@ export default function Dash() {
               hidden
               onChange={handleFile}
             />
+
             <div
               className="export"
               style={{
-                marginLeft:"15px"
+                marginLeft: "15px",
               }}
               onClick={() =>
                 exportFunction.current?.()
@@ -107,10 +135,19 @@ export default function Dash() {
             </div>
           </Box>
         </Box>
-        <Box className="clouds">
+
+        {/* NURBS + ANALYSIS */}
+        <Box
+          className="clouds"
+          sx={{
+            paddingBottom: "40px",
+          }}
+        >
           <TabPanel
             file={file}
-            exportFunction={exportFunction}
+            exportFunction={
+              exportFunction
+            }
           />
         </Box>
       </Box>

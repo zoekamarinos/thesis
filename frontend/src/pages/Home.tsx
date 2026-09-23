@@ -11,19 +11,22 @@ export default function Home() {
             <img src={logo} alt="Logo"/>
         </Box>
         <Box className="content-page-half">
-            <Typography variant="h3" sx={{marginLeft: "10%"}}>
-                CloudStudio
-            </Typography>
-            <Box sx={{marginLeft: "25%", marginTop: "10%"}}>
-                <div className="login" onClick={() => navigate('/dash')}>
-                    Login
-                </div>
+            <Box sx={{marginLeft: "10%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center"}}>
+                <Typography variant="h3">
+                    CloudStudio
+                </Typography>
+                <Box sx={{marginTop: "10%"}}>
+                    <div className="login" onClick={() => navigate('/dash')}>
+                        Login
+                    </div>
+                </Box>
+                <Box sx={{marginTop: "7%"}}>
+                    <div className="sign-up" onClick={() => navigate('/')}>
+                        Sign Up
+                    </div>
+                </Box>
             </Box>
-            <Box sx={{marginLeft: "25%", marginTop: "7%"}}>
-                <div className="sign-up" onClick={() => navigate('/')}>
-                    Sign Up
-                </div>
-            </Box>
+            
         </Box>
     </Box>
   );
