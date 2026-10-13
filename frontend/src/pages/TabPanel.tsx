@@ -872,21 +872,6 @@ export default function TabPanel({
 
               </Box>
 
-              <Typography
-                variant="caption"
-                sx={{
-                  display: "block",
-                  color: "#666",
-                  mt: 2,
-                }}
-              >
-                The calculated values represent
-                differences between the two
-                algorithms. They do not by
-                themselves establish which
-                algorithm is more accurate.
-              </Typography>
-
             </Box>
           )}
 

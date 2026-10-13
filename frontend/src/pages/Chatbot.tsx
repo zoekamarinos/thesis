@@ -118,7 +118,6 @@ function Chatbot({
         sx={{
           color: "black",
           mb: 1,
-          fontWeight: 600
         }}
       >
         AI Error Analysis
@@ -169,12 +168,6 @@ function Chatbot({
           gap: 1.5
         }}
       >
-        {chatMessages.length === 0 && (
-          <Typography sx={{ color: "#64748B", fontStyle: "italic", textAlign: "center", mt: 4 }}>
-            Ask the AI to analyse the differences between the two algorithms.
-          </Typography>
-        )}
-
         {chatMessages.map((msg, index) => {
           const isUser = msg.sender === "User";
           return (

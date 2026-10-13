@@ -81,6 +81,47 @@ function findGridSize(n: number): [number, number] | null {
   return best;
 }
 
+function dist3(a: number[], b: number[]): number {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/*
+ * Decides whether a patch's v direction wraps all the way around
+ * (e.g. a full revolution in azimuth, like a sphere, cylinder, or any
+ * other "generalized cylinder" surface) rather than being a
+ * genuinely open edge (e.g. a flat rectangular patch). Compares the
+ * gap between the last and first column against the typical gap
+ * between any other two adjacent columns -- a true wraparound closes
+ * with roughly the same step size as every other seam, while a
+ * genuinely open edge is normally many times wider than that.
+ */
+function isClosedInV(pts: number[][], sizeU: number, sizeV: number): boolean {
+  if (sizeV < 3) return false;
+
+  let wrapTotal = 0;
+  let typicalTotal = 0;
+  let typicalCount = 0;
+
+  for (let i = 0; i < sizeU; i++) {
+    const first = pts[i * sizeV];
+    const last = pts[i * sizeV + (sizeV - 1)];
+    wrapTotal += dist3(first, last);
+
+    for (let j = 0; j < sizeV - 1; j++) {
+      typicalTotal += dist3(pts[i * sizeV + j], pts[i * sizeV + j + 1]);
+      typicalCount++;
+    }
+  }
+
+  const wrapAvg = wrapTotal / sizeU;
+  const typicalAvg = typicalCount > 0 ? typicalTotal / typicalCount : 0;
+
+  return typicalAvg > 0 && wrapAvg <= typicalAvg * 2.5;
+}
+
 /*
  * Plain smooth-shaded surface mesh from a row-major (u then v) point
  * grid — one vertex per grid point, standard averaged normals.
@@ -108,6 +149,26 @@ function buildSurfaceGeometry(
       const b = i * sizeV + (j + 1);
       const c = (i + 1) * sizeV + j;
       const d = (i + 1) * sizeV + (j + 1);
+
+      indices.push(a, c, b);
+      indices.push(b, c, d);
+    }
+  }
+
+  // Close the seam between the last column and the first, for
+  // surfaces that wrap all the way around (e.g. a full revolution in
+  // azimuth). Without this, the loop above only ever connects column
+  // j to column j+1 and never wraps back to column 0 -- every such
+  // surface rendered with exactly one missing strip, which is why it
+  // showed up on every object (sphere, cylinder, bone) regardless of
+  // shape: it was never about the geometry, it was this one seam
+  // never being drawn.
+  if (isClosedInV(pts, sizeU, sizeV)) {
+    for (let i = 0; i < sizeU - 1; i++) {
+      const a = i * sizeV + (sizeV - 1);
+      const b = i * sizeV + 0;
+      const c = (i + 1) * sizeV + (sizeV - 1);
+      const d = (i + 1) * sizeV + 0;
 
       indices.push(a, c, b);
       indices.push(b, c, d);
