@@ -29,6 +29,12 @@ interface Patch {
   vCurvePts?: number[][];
 }
 
+interface SurfaceResponse {
+  patches?: Patch[];
+  warnings?: string[];
+  error?: string;
+}
+
 interface CloudsProps {
   method: string;
   file: File | null;
@@ -211,14 +217,22 @@ function toVec3(evalpts: number[][], index: number): THREE.Vector3 {
  * used to scale both the edge-tube radius and the boundary-matching
  * tolerance to the model's real-world size.
  */
-function computeBoundingDiagonal(patches: Patch[]): number {
+function computeBoundingBox(patches: Patch[]): THREE.Box3 {
   const box = new THREE.Box3();
 
   patches.forEach((p) => {
-    p.evalpts.forEach((pt) => {
-      box.expandByPoint(new THREE.Vector3(pt[0], pt[1], pt[2]));
+    [p.evalpts, p.ctrlpts, p.datapts].forEach((arr) => {
+      arr?.forEach((pt) => {
+        box.expandByPoint(new THREE.Vector3(pt[0], pt[1], pt[2]));
+      });
     });
   });
+
+  return box;
+}
+
+function computeBoundingDiagonal(patches: Patch[]): number {
+  const box = computeBoundingBox(patches);
 
   if (box.isEmpty()) {
     return 1;
@@ -227,7 +241,8 @@ function computeBoundingDiagonal(patches: Patch[]): number {
   const size = new THREE.Vector3();
   box.getSize(size);
 
-  return size.length();
+  // Guard against degenerate (zero-size) clouds
+  return size.length() || 1;
 }
 
 function buildEdgeTube(
@@ -272,6 +287,7 @@ export default function Clouds({
   const [showEdges, setShowEdges] = useState<boolean>(true);
 
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
   const exportSurface = (): void => {
@@ -448,6 +464,7 @@ export default function Clouds({
     let camera: THREE.PerspectiveCamera | undefined;
 
     let cancelled = false;
+    const mountNode = mountRef.current;
 
     const generate = async (): Promise<(() => void) | void> => {
       if (!mountRef.current || !file) {
@@ -455,6 +472,7 @@ export default function Clouds({
       }
 
       setError(null);
+      setWarnings([]);
       setLoading(true);
 
       const form = new FormData();
@@ -466,7 +484,7 @@ export default function Clouds({
         form.append("totalPatches", totalPatches.trim());
       }
 
-      let json: any;
+      let json: SurfaceResponse;
 
       try {
         const res = await fetch(`${API_BASE}/surface`, {
@@ -501,7 +519,22 @@ export default function Clouds({
         return;
       }
 
-      const newPatches: Patch[] = json.patches ?? [];
+      // Drop any patch whose sampled surface has non-finite values, so
+      // one bad patch can't blank the whole view.
+      const newPatches: Patch[] = (json.patches ?? []).filter(
+        (p: Patch) =>
+          Array.isArray(p.evalpts) &&
+          p.evalpts.length > 0 &&
+          p.evalpts.every((pt) => pt.every((v) => Number.isFinite(v)))
+      );
+
+      setWarnings(Array.isArray(json.warnings) ? json.warnings : []);
+
+      if (newPatches.length === 0) {
+        setError("The server returned no drawable surface for this file.");
+        setLoading(false);
+        return;
+      }
 
       patchesRef.current = newPatches;
       onPatchesChange?.(newPatches);
@@ -517,8 +550,20 @@ export default function Clouds({
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x111111);
 
-      camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-      camera.position.set(3, 3, 3);
+      // Scale everything to the model so tiny or huge clouds are visible,
+      // instead of assuming a model about one unit wide.
+      const sceneDiag = computeBoundingDiagonal(newPatches);
+      const sceneBox = computeBoundingBox(newPatches);
+      const sceneCenter = new THREE.Vector3();
+      if (!sceneBox.isEmpty()) sceneBox.getCenter(sceneCenter);
+
+      camera = new THREE.PerspectiveCamera(
+        60,
+        width / height,
+        sceneDiag * 0.001,
+        sceneDiag * 100
+      );
+      camera.position.copy(sceneCenter).addScalar(sceneDiag * 0.9);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(width, height);
@@ -528,8 +573,10 @@ export default function Clouds({
 
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
+      controls.target.copy(sceneCenter);
+      controls.update();
 
-      scene.add(new THREE.AxesHelper(2));
+      scene.add(new THREE.AxesHelper(sceneDiag * 0.6));
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
@@ -638,14 +685,18 @@ export default function Clouds({
           };
         } else {
           // Fallback: couldn't determine a grid, show points instead
-          layersRef.current.model.push(addPoints(p.evalpts, colour, 0.03));
+          layersRef.current.model.push(
+            addPoints(p.evalpts, colour, sceneDiag * 0.008)
+          );
         }
 
-        layersRef.current.control.push(addPoints(p.ctrlpts, 0xffffff, 0.06));
+        layersRef.current.control.push(
+          addPoints(p.ctrlpts, 0xffffff, sceneDiag * 0.016)
+        );
 
         if (p.datapts) {
           layersRef.current.cloud.push(
-            addPoints(p.datapts, 0x00ffaa, 0.06)
+            addPoints(p.datapts, 0x00ffaa, sceneDiag * 0.016)
           );
         }
 
@@ -662,7 +713,11 @@ export default function Clouds({
 
       const diag = computeBoundingDiagonal(newPatches);
       const tolerance = diag * 0.02;
-      const edgeRadius = THREE.MathUtils.clamp(diag * 0.006, 0.004, 0.05);
+      const edgeRadius = THREE.MathUtils.clamp(
+        diag * 0.006,
+        diag * 0.002,
+        diag * 0.02
+      );
 
       const sides: Side[] = ["uStart", "uEnd", "vStart", "vEnd"];
       const usedSides = new Set<string>();
@@ -828,8 +883,8 @@ export default function Clouds({
       renderer?.dispose();
       scene?.clear();
 
-      if (mountRef.current) {
-        mountRef.current.innerHTML = "";
+      if (mountNode) {
+        mountNode.innerHTML = "";
       }
 
       layersRef.current = {
@@ -841,6 +896,9 @@ export default function Clouds({
 
       sharedEdgesRef.current = [];
     };
+    // Visibility toggles and onPatchesChange are intentionally left out:
+    // changing them must not rebuild the whole scene.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, file, totalPatches]);
 
   useEffect(() => {
@@ -950,6 +1008,21 @@ export default function Clouds({
         Orange edges join two patches with a sharp seam — click one to
         smooth it. Cyan edges are smoothed — click to make sharp again.
       </Typography>
+
+      {warnings.length > 0 && (
+        <div
+          style={{
+            color: "#b36b00",
+            marginBottom: "8px",
+            marginLeft: "6px",
+            fontSize: 13,
+          }}
+        >
+          {warnings.map((w, i) => (
+            <div key={i}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div
