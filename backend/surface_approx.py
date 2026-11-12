@@ -1,18 +1,15 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from geomdl import fitting, construct, BSpline
+import numpy as np
 import math
 import re
 
 try:
-    import numpy as np
     from sklearn.manifold import Isomap
     from scipy.spatial.distance import pdist
     REORDER_AVAILABLE = True
 except ImportError:
-    # numpy/scikit-learn/scipy aren't installed -- the geometric
-    # reorder fallback (fix_grid_order) is skipped and stated
-    # dimensions are trusted as-is, same as before this feature existed.
     REORDER_AVAILABLE = False
 
 app = Flask(__name__)
@@ -21,18 +18,14 @@ CORS(app)
 DEGREE_U = 3
 DEGREE_V = 3
 
-# Row detection looks ahead this many points to make an initial guess
-# at which axis is "held constant" for a new row, and treats a change
-# smaller than this as no change at all. Kept small so the lookahead
-# doesn't overrun into the next row on short rows.
 ROW_LOOKAHEAD = 2
 ROW_TOL = 1e-6
-
-# How far around the pole the padded ring points are spread, as a
-# fraction of the distance to the adjacent ring. Small enough to be
-# visually indistinguishable from a true point, large enough to avoid
-# an ill-conditioned fit (see pad_pole_row).
 POLE_PAD_RADIUS_FRAC = 0.01
+GRID_ORDER_GOOD_ENOUGH = 0.45
+ISOMAP_NEIGHBOR_CANDIDATES = (10, 8, 12, 6, 14)
+MAX_AXIS = 80
+
+NUM_SPLIT = re.compile(r"[,\s;]+")
 
 
 def parse_file(text, warnings=None):
@@ -42,34 +35,15 @@ def parse_file(text, warnings=None):
 
 
 # ---------------------------------------------------------------------
-# Automatic row/grid detection (used whenever a block has no explicit
-# size_u=/size_v= on its "# PATCH" line -- including when there are no
-# "# PATCH" markers in the file at all).
+# Row / grid detection
 # ---------------------------------------------------------------------
 
 def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
-    """
-    Split a flat, ordered point list into rows without any markers,
-    by detecting -- independently for each new row -- which axis stays
-    constant over the next couple of points. This adapts per-segment,
-    so a file that switches shape partway through (e.g. a sphere's
-    rings are constant in z, a cylinder's rings are constant in x) is
-    still read correctly, rather than assuming one axis for the whole
-    file.
-
-    A point where no axis is near-constant going forward (e.g. a
-    sphere's pole, where every direction immediately curves away)
-    becomes its own single-point row.
-    """
+    """Split an ordered point list into rows by finding which axis stays constant."""
 
     n = len(pts)
 
-    # An axis that never changes across the *entire* point cloud (e.g.
-    # a flat test grid where z is 0 for every point) carries no row/
-    # column information -- every point trivially satisfies "z is
-    # constant," so it would always look like the best axis and
-    # swallow every row into one. Exclude axes like that, unless
-    # literally all three are constant (a degenerate case).
+    # An axis that never changes in the whole cloud carries no row information
     global_range = [
         max(p[a] for p in pts) - min(p[a] for p in pts)
         for a in range(3)
@@ -106,11 +80,6 @@ def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
             i += 1
             continue
 
-        # Grow the row, re-checking at each step that the chosen axis
-        # is still the smallest-changing axis (not just "below tol")
-        # -- this stops a row from overrunning into the next one when
-        # the chosen axis also happens to change slowly for a point
-        # or two past the true boundary.
         row = [pts[i]]
         j = i + 1
 
@@ -137,12 +106,7 @@ def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
 
 
 def split_repeated_loops(row):
-    """
-    If a row contains an exact repeat of its own first point partway
-    through, it's really multiple identical loops back to back (e.g.
-    an accidentally duplicated ring in the source file) rather than
-    one genuine row -- split at each repeat.
-    """
+    """Split a row that repeats its own first point into separate loops."""
 
     if len(row) < 2:
         return [row]
@@ -166,18 +130,7 @@ def split_repeated_loops(row):
 
 
 def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
-    """
-    Expand a single-point "pole" row into a full row matching a
-    neighboring ring's width, by spreading each copy slightly toward
-    the corresponding neighbor point (in full 3D, not just one axis).
-    This gives the row real, well-separated geometry -- a tiny cone
-    tip rather than a line of near-duplicate points -- which a global
-    least-squares surface fit (approximate_surface) needs in order to
-    stay numerically well-conditioned. A line of exact or near-exact
-    duplicates instead produces a singular or near-singular system,
-    either erroring outright or (worse) silently returning a wildly
-    distorted surface.
-    """
+    """Turn a single pole point into a tiny ring matching its neighbour row."""
 
     px, py, pz = pole_point
 
@@ -192,24 +145,14 @@ def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
 
 
 def normalize_rows(rows):
-    """
-    Clean up raw rows before grouping them into grid blocks:
-
-    - Split any row that's really multiple duplicated loops back to
-      back (see split_repeated_loops).
-    - Drop a row that's an exact duplicate of the one immediately
-      before it (accidental duplicate block in the source data).
-    - Pad a single-point row (e.g. a sphere's pole) up to match a
-      neighboring row's width (see pad_pole_row).
-    """
+    """Split repeated loops, drop duplicate rows and pad single-point pole rows."""
 
     expanded = []
     for row in rows:
         expanded.extend(split_repeated_loops(row))
-    rows = expanded
 
     cleaned = []
-    for row in rows:
+    for row in expanded:
         if cleaned and row == cleaned[-1]:
             continue
         cleaned.append(row)
@@ -230,12 +173,7 @@ def normalize_rows(rows):
 
 
 def split_into_grid_blocks(rows):
-    """
-    Group consecutive rows of equal width into rectangular u x v
-    blocks. A change in row width marks a new block -- this is what
-    lets multiple distinct shapes in one file (e.g. a sphere and a
-    cylinder) be auto-split into separate patches with no markers.
-    """
+    """Group consecutive rows of equal width into (points, size_u, size_v) blocks."""
 
     blocks = []
     current_rows = [rows[0]]
@@ -259,38 +197,9 @@ def split_into_grid_blocks(rows):
     return grids
 
 
-def auto_grid_blocks(pts):
-    """
-    Turn a flat, ordered point list into a list of
-    (points, size_u, size_v) rectangular grid blocks, entirely from
-    point order -- no "# PATCH" markers or explicit dimensions
-    required. This is the fallback used whenever a block doesn't state
-    its own size_u/size_v.
-    """
-
-    if len(pts) < 2:
-        return [(pts, 1, len(pts))]
-
-    rows = group_rows_auto(pts)
-    rows = normalize_rows(rows)
-
-    return split_into_grid_blocks(rows)
-
-
 def grid_order_score(pts, size_u, size_v):
-    """
-    How well a flat point list, laid out as a size_u x size_v grid in
-    the order given, actually looks like a grid -- independent of
-    axis alignment, so it works for curved-quad patches (e.g. a
-    cube-projected sphere face) where no single x/y/z coordinate
-    stays constant along any row, unlike group_rows_auto.
+    """Mean neighbour step size over overall spread. Lower means a cleaner grid."""
 
-    Measures the mean step size between grid-adjacent points (one
-    step in u, one step in v), normalized by the overall spread of
-    the point cloud. A correctly-ordered grid takes small, steady
-    steps between neighbors; a scrambled one jumps around, so its
-    score comes out much higher. Lower is better.
-    """
     pts = np.asarray(pts, dtype=float)
     grid = pts.reshape(size_u, size_v, 3)
     du = np.linalg.norm(grid[1:, :, :] - grid[:-1, :, :], axis=-1)
@@ -301,64 +210,65 @@ def grid_order_score(pts, size_u, size_v):
     return float((du.mean() + dv.mean()) / 2 / scale)
 
 
-# A grid_order_score at or below this is treated as "already a
-# reasonable grid" -- no reorder attempted. Found empirically: a
-# correctly-ordered curved-quad patch scores well under this, while a
-# shuffled one scores roughly 3-6x higher.
-GRID_ORDER_GOOD_ENOUGH = 0.45
+def grids_quality(grids):
+    """Return (fraction of points in usable grids, worst order score)."""
 
-# n_neighbors values tried when hunting for the best Isomap embedding.
-# 10 was the standout in testing (consistently recovered the true
-# order on a shuffled 5x7 curved patch), but several values are tried
-# since the right neighborhood size can shift with patch shape/size.
-ISOMAP_NEIGHBOR_CANDIDATES = (10, 8, 12, 6, 14)
+    total = sum(len(g[0]) for g in grids) or 1
+    usable = [g for g in grids if g[1] >= 3 and g[2] >= 3]
+    frac = sum(len(g[0]) for g in usable) / total
+
+    if not usable or not REORDER_AVAILABLE:
+        return frac, 0.0
+
+    worst = 0.0
+    for flat, su, sv in usable:
+        try:
+            worst = max(worst, grid_order_score(flat, su, sv))
+        except Exception:
+            pass
+    return frac, worst
+
+
+def auto_grid_blocks(pts, warnings=None):
+    if len(pts) < 2:
+        return [(pts, 1, len(pts))]
+
+    rows = normalize_rows(group_rows_auto(pts))
+    grids = split_into_grid_blocks(rows)
+
+    if not REORDER_AVAILABLE:
+        return grids
+
+    frac, score = grids_quality(grids)
+    if (frac < 0.5 or score > GRID_ORDER_GOOD_ENOUGH) and warnings is not None:
+        warnings.append(
+            "The points don't form a clear grid (rows of equal length "
+            "listed in order), so the surface may be distorted. Check "
+            "the point order in the file."
+        )
+
+    return grids
 
 
 def reorder_via_isomap(pts, size_u, size_v, n_neighbors):
-    """
-    Recover a size_u x size_v row-major ordering for pts using pure
-    geometry (no reliance on the order pts are already in). Builds a
-    2D Isomap embedding -- a nearest-neighbor graph plus geodesic
-    (manifold) distances -- which, for points sampled from a curved
-    quad surface, tends to lay out roughly like the surface's own
-    (u, v) parameter space. Points are then bucketed into size_u
-    groups by their position along the embedding's first axis, and
-    each group is sorted along the second axis to get the size_v
-    ordering within it.
+    """Recover a row-major ordering from point geometry using a 2D Isomap embedding."""
 
-    This is a heuristic, not a guarantee -- see fix_grid_order, which
-    actually checks the result before trusting it.
-    """
     pts = np.asarray(pts, dtype=float)
-    iso = Isomap(n_neighbors=n_neighbors, n_components=2)
-    embedding = iso.fit_transform(pts)
+    embedding = Isomap(n_neighbors=n_neighbors, n_components=2).fit_transform(pts)
 
     order_u = np.argsort(embedding[:, 0])
     groups = np.array_split(order_u, size_u)
 
     reordered_idx = []
     for g in groups:
-        g_sorted = g[np.argsort(embedding[g, 1])]
-        reordered_idx.extend(g_sorted.tolist())
+        reordered_idx.extend(g[np.argsort(embedding[g, 1])].tolist())
 
     return pts[reordered_idx]
 
 
 def fix_grid_order(pts, size_u, size_v, warnings=None, label=""):
-    """
-    Given a block whose dimensions (size_u, size_v) are already known
-    -- stated in a "# PATCH size_u=.. size_v=.." marker -- but whose
-    point ORDER may not actually be row-major (a user's file doesn't
-    have to list points in the right order for this to work), try to
-    repair the ordering using geometry alone.
+    """Keep the given order if it looks like a grid, otherwise try Isomap reordering."""
 
-    Scores the as-given order with grid_order_score; if it already
-    looks like a sane grid, it's left untouched. Otherwise tries a
-    handful of Isomap embeddings and keeps whichever one scores best,
-    but only adopts it if it's a clear improvement -- if nothing beats
-    the original, the original is kept and a warning is recorded
-    rather than silently handing back a still-scrambled block.
-    """
     pts_arr = [[float(c) for c in p] for p in pts]
 
     if not REORDER_AVAILABLE or size_u < 2 or size_v < 2:
@@ -403,25 +313,68 @@ def fix_grid_order(pts, size_u, size_v, warnings=None, label=""):
     return pts_arr
 
 
+# ---------------------------------------------------------------------
+# File parsing
+# ---------------------------------------------------------------------
+
+def parse_coordinate_line(line):
+    """Read one line as numbers. Returns None for headers, comments and faces."""
+
+    if line.startswith("#") or line.startswith("//"):
+        return None
+
+    tokens = [t for t in NUM_SPLIT.split(line.strip(" ,;\t")) if t != ""]
+
+    if tokens and tokens[0] == "v":
+        tokens = tokens[1:]
+
+    if len(tokens) < 3:
+        return None
+
+    values = []
+
+    for t in tokens:
+        try:
+            values.append(float(t))
+        except ValueError:
+            break
+
+    if len(values) < 3:
+        return None
+
+    if not all(math.isfinite(v) for v in values[:3]):
+        return None
+
+    return values
+
+
+def strip_index_column(rows):
+    """Reduce rows to x, y, z, dropping a running index column if present."""
+
+    if not rows:
+        return rows
+
+    has_index = (
+        len(rows) >= 4
+        and all(len(r) >= 4 for r in rows)
+        and all(
+            abs(r[0] - (rows[0][0] + k)) < 1e-9
+            for k, r in enumerate(rows)
+        )
+        and rows[0][0] in (0.0, 1.0)
+    )
+
+    if has_index:
+        return [r[1:4] for r in rows]
+
+    return [r[:3] for r in rows]
+
+
 def parse_points(text, warnings=None):
     """
-    Parse a plain point-cloud file into one or more (points, size_u,
-    size_v) grid blocks.
-
-    A block starts at "# PATCH" (or at the start of the file). The
-    marker line can optionally state the block's own dimensions:
-
-        # PATCH size_u=8 size_v=20
-
-    When given, those dimensions are trusted for size_u/size_v, but
-    the point ORDER itself is no longer taken on faith: fix_grid_order
-    checks whether the points actually fall into a sane grid in that
-    order and, if not, repairs the ordering from geometry alone. This
-    is what lets a user hand in points with the right dimensions
-    stated but listed in any order -- including curved-quad patches
-    (e.g. a cube-projected sphere face) where no coordinate axis stays
-    constant along a row, so the older axis-based auto-detection could
-    never have ordered them in the first place.
+    Parse a point-cloud file into (points, size_u, size_v) grid blocks.
+    A block starts at "# PATCH" (optionally "# PATCH size_u=N size_v=M")
+    or at the start of the file.
     """
 
     marker_blocks = []
@@ -432,8 +385,26 @@ def parse_points(text, warnings=None):
         if current:
             marker_blocks.append((current[:], current_dims))
 
-    for line in text.splitlines():
-        line = line.strip()
+    lines = text.lstrip("﻿").splitlines()
+
+    # ASCII PLY: only read the vertex block
+    if lines and lines[0].strip().lower() == "ply":
+        n_vertex = None
+        header_end = None
+        for k, ln in enumerate(lines):
+            tok = ln.split()
+            if len(tok) == 3 and tok[0] == "element" and tok[1] == "vertex":
+                n_vertex = int(tok[2])
+            if ln.strip() == "end_header":
+                header_end = k
+                break
+        if header_end is not None:
+            lines = lines[header_end + 1:]
+            if n_vertex is not None:
+                lines = lines[:n_vertex]
+
+    for line in lines:
+        line = line.strip().lstrip("﻿")
 
         if not line:
             continue
@@ -451,16 +422,16 @@ def parse_points(text, warnings=None):
             )
             continue
 
-        parts = line.split(",")
+        row = parse_coordinate_line(line)
 
-        if len(parts) == 3:
-            current.append([
-                float(parts[0]),
-                float(parts[1]),
-                float(parts[2])
-            ])
+        if row is not None:
+            current.append(row)
 
     flush()
+
+    marker_blocks = [
+        (strip_index_column(b), d) for b, d in marker_blocks
+    ]
 
     grids = []
 
@@ -469,10 +440,8 @@ def parse_points(text, warnings=None):
             size_u, size_v = dims
 
             if size_u * size_v != len(block_pts):
-                # Stated dimensions don't match the actual point count
-                # -- fall back to auto-detection rather than silently
-                # misreading the block.
-                grids.extend(auto_grid_blocks(block_pts))
+                # Stated size doesn't match the point count: detect instead
+                grids.extend(auto_grid_blocks(block_pts, warnings=warnings))
             else:
                 label = f"patch {i + 1}: " if len(marker_blocks) > 1 else ""
                 fixed_pts = fix_grid_order(
@@ -480,23 +449,26 @@ def parse_points(text, warnings=None):
                 )
                 grids.append((fixed_pts, size_u, size_v))
         else:
-            grids.extend(auto_grid_blocks(block_pts))
+            grids.extend(auto_grid_blocks(block_pts, warnings=warnings))
 
     return grids
 
 
 def parse_nurbs(text):
     patches = []
-    current = {
-        "degree_u": None,
-        "degree_v": None,
-        "size_u": None,
-        "size_v": None,
-        "ctrlpts": [],
-        "knot_u": [],
-        "knot_v": []
-    }
 
+    def new_patch():
+        return {
+            "degree_u": None,
+            "degree_v": None,
+            "size_u": None,
+            "size_v": None,
+            "ctrlpts": [],
+            "knot_u": [],
+            "knot_v": []
+        }
+
+    current = new_patch()
     section = None
 
     for line in text.splitlines():
@@ -507,20 +479,9 @@ def parse_nurbs(text):
             continue
 
         if line.startswith("# NURBS PATCH"):
-
             if current["ctrlpts"]:
                 patches.append(current)
-
-            current = {
-                "degree_u": None,
-                "degree_v": None,
-                "size_u": None,
-                "size_v": None,
-                "ctrlpts": [],
-                "knot_u": [],
-                "knot_v": []
-            }
-
+            current = new_patch()
             section = None
             continue
 
@@ -546,32 +507,17 @@ def parse_nurbs(text):
             section = "knot_v"
 
         elif section == "ctrlpts":
-
             parts = line.split(",")
 
             if len(parts) == 3:
-                current["ctrlpts"].append([
-                    float(parts[0]),
-                    float(parts[1]),
-                    float(parts[2])
-                ])
+                current["ctrlpts"].append([float(p) for p in parts])
 
         elif section == "knot_u":
-
-            current["knot_u"] = [
-                float(x)
-                for x in line.split(",")
-            ]
-
+            current["knot_u"] = [float(x) for x in line.split(",")]
             section = None
 
         elif section == "knot_v":
-
-            current["knot_v"] = [
-                float(x)
-                for x in line.split(",")
-            ]
-
+            current["knot_v"] = [float(x) for x in line.split(",")]
             section = None
 
     if current["ctrlpts"]:
@@ -579,6 +525,10 @@ def parse_nurbs(text):
 
     return patches
 
+
+# ---------------------------------------------------------------------
+# Patch splitting and merging
+# ---------------------------------------------------------------------
 
 def near_square_factors(n):
 
@@ -640,6 +590,7 @@ def split_indices(size, n):
 
 
 def split_grid(pts, size_u, size_v, patches_u, patches_v):
+    """Cut a grid into sub-grids that share their boundary points."""
 
     u_bounds = split_indices(size_u, patches_u)
     v_bounds = split_indices(size_v, patches_v)
@@ -690,10 +641,7 @@ def merge_blocks(blocks, total_groups):
 
 
 def find_grid_size(n):
-    """Only used as a last-resort fallback when merging blocks down to
-    fewer patches than were detected (see merge_blocks' caller) --
-    merging concatenates points from different blocks together, which
-    loses their individual known shapes."""
+    """Find a near-square u x v factorisation of n (used after merging blocks)."""
 
     best = None
     diff = float("inf")
@@ -711,6 +659,10 @@ def find_grid_size(n):
     return best
 
 
+# ---------------------------------------------------------------------
+# Fitting
+# ---------------------------------------------------------------------
+
 def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
 
     curves = construct.extract_curves(surf)
@@ -727,11 +679,7 @@ def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
         "size_u": surf.ctrlpts_size_u,
         "size_v": surf.ctrlpts_size_v,
 
-        # The grid shape of `datapts` itself -- NOT the same as
-        # size_u/size_v above, which describe the control-point grid.
-        # Without this, nothing downstream (e.g. a seam/boundary
-        # check) can safely reshape datapts back into rows and
-        # columns to find its edges.
+        # grid shape of datapts (not the control-point grid)
         "data_size_u": data_size_u,
         "data_size_v": data_size_v,
 
@@ -747,41 +695,30 @@ def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
 
 
 def safe_ctrlpts_size(data_size, degree):
-    """
-    How many control points to request from approximate_surface along
-    one axis. Two failure modes to avoid:
-
-    - Too few (<= degree) divides by zero in geomdl's knot vector
-      calculation.
-    - Too many -- in particular, close to the full data size -- turns
-      the global least-squares fit into a near-singular system
-      whenever the data loops back on itself (e.g. a ring of points
-      going all the way around a sphere or cylinder). That doesn't
-      error, it just silently returns wildly distorted control points
-      (seen directly: an x range of roughly [-1.4e6, 1.9e5] on sphere
-      data that should range roughly [-1, 1]), which is worse than an
-      error because nothing flags it.
-
-    Halving the data size is a reasonably safe middle ground: enough
-    points to represent real curvature, well short of forcing a
-    near-exact (and, for closed loops, near-singular) fit.
-    """
+    """Control points to request: half the data size, but at least degree + 1."""
 
     return max(degree + 1, min(data_size, data_size // 2))
 
 
+def fit_is_sane(surf, data_pts):
+    """Reject fits with non-finite values or control points far outside the data."""
+
+    ctrl = np.asarray(surf.ctrlpts, dtype=float)
+    data = np.asarray(data_pts, dtype=float)
+
+    if not np.isfinite(ctrl).all():
+        return False
+
+    diag = float(np.linalg.norm(np.ptp(data, axis=0))) or 1.0
+    lo, hi = data.min(axis=0) - 3 * diag, data.max(axis=0) + 3 * diag
+
+    return bool(((ctrl >= lo) & (ctrl <= hi)).all())
+
+
 def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
-    """
-    Fit and append surfaces for one grid block. A sub-patch that's too
-    small to fit (fewer than 2 points along an axis -- typically a
-    malformed or duplicated section in the source data) is skipped
-    with a warning rather than aborting the whole request, so the rest
-    of a mostly-good file still comes back as valid patches.
-    """
+    """Fit and append surfaces for one grid block, skipping any that fail."""
 
-    sub_iter = split_grid(pts, size_u, size_v, split_u, split_v)
-
-    for sub_pts, sub_u, sub_v in sub_iter:
+    for sub_pts, sub_u, sub_v in split_grid(pts, size_u, size_v, split_u, split_v):
 
         du = min(DEGREE_U, sub_u - 1)
         dv = min(DEGREE_V, sub_v - 1)
@@ -789,45 +726,71 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
         if du < 1 or dv < 1:
             warnings.append(
                 f"Skipped a {sub_u} x {sub_v} block -- fewer than 2 "
-                "points along one axis, so no surface could be fit "
-                "to it. This usually means that section of the "
-                "source data is malformed or duplicated."
+                "points along one axis, so no surface could be fit to it."
             )
             continue
+
+        fit_pts = sub_pts
+        fit_u, fit_v = sub_u, sub_v
+
+        if max(sub_u, sub_v) > MAX_AXIS:
+            su = max(1, math.ceil(sub_u / MAX_AXIS))
+            sv = max(1, math.ceil(sub_v / MAX_AXIS))
+            rows_i = sorted(set(list(range(0, sub_u, su)) + [sub_u - 1]))
+            cols_j = sorted(set(list(range(0, sub_v, sv)) + [sub_v - 1]))
+            fit_pts = [sub_pts[i * sub_v + j] for i in rows_i for j in cols_j]
+            fit_u, fit_v = len(rows_i), len(cols_j)
+            du = min(DEGREE_U, fit_u - 1)
+            dv = min(DEGREE_V, fit_v - 1)
+            warnings.append(
+                f"A {sub_u} x {sub_v} block was thinned to "
+                f"{fit_u} x {fit_v} points for fitting."
+            )
 
         try:
 
             if method == "approximate":
-
-                cu = safe_ctrlpts_size(sub_u, du)
-                cv = safe_ctrlpts_size(sub_v, dv)
-
                 surf = fitting.approximate_surface(
-                    sub_pts,
-                    sub_u,
-                    sub_v,
+                    fit_pts,
+                    fit_u,
+                    fit_v,
                     du,
                     dv,
-                    ctrlpts_size_u=cu,
-                    ctrlpts_size_v=cv
+                    ctrlpts_size_u=safe_ctrlpts_size(fit_u, du),
+                    ctrlpts_size_v=safe_ctrlpts_size(fit_v, dv)
                 )
-
             else:
+                surf = fitting.interpolate_surface(fit_pts, fit_u, fit_v, du, dv)
 
-                surf = fitting.interpolate_surface(
-                    sub_pts,
-                    sub_u,
-                    sub_v,
-                    du,
-                    dv
-                )
+            if not fit_is_sane(surf, sub_pts):
+                raise ValueError("fit was numerically unstable")
 
         except Exception as exc:
-            warnings.append(
-                f"Skipped a {sub_u} x {sub_v} block -- fitting "
-                f"failed ({exc})."
-            )
-            continue
+            surf = None
+
+            if method == "approximate":
+                # Retry once with interpolation
+                try:
+                    surf = fitting.interpolate_surface(
+                        fit_pts, fit_u, fit_v, du, dv
+                    )
+                    if not fit_is_sane(surf, sub_pts):
+                        surf = None
+                except Exception:
+                    surf = None
+
+                if surf is not None:
+                    warnings.append(
+                        f"A {sub_u} x {sub_v} block couldn't be "
+                        f"approximated ({exc}); interpolated instead."
+                    )
+
+            if surf is None:
+                warnings.append(
+                    f"Skipped a {sub_u} x {sub_v} block -- fitting "
+                    f"failed ({exc})."
+                )
+                continue
 
         surf.delta = 0.02
 
@@ -846,10 +809,7 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
 def surface():
 
     file = request.files.get("file")
-    method = request.form.get(
-        "method",
-        "approximate"
-    )
+    method = request.form.get("method", "approximate")
 
     total_raw = request.form.get("totalPatches", "")
     total_patches = (
@@ -857,11 +817,13 @@ def surface():
     )
 
     if not file:
-        return jsonify({
-            "error": "No file uploaded"
-        })
+        return jsonify({"error": "No file uploaded"})
 
-    text = file.read().decode("utf-8")
+    raw = file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
 
     results = []
     warnings = []
@@ -902,7 +864,12 @@ def surface():
 
         if not parsed:
             return jsonify({
-                "error": "No points found in file."
+                "error": (
+                    "No points found in file. Expected one point per "
+                    "line as x,y,z (comma, space, tab or semicolon "
+                    "separated; extra columns and header lines are "
+                    "ignored)."
+                )
             })
 
         num_blocks = len(parsed)
@@ -917,11 +884,23 @@ def surface():
         elif total_patches <= num_blocks:
 
             flat_blocks = [pts for pts, _, _ in parsed]
+            sizes = [(su, sv) for _, su, sv in parsed]
             merged = merge_blocks(flat_blocks, max(1, total_patches))
+
+            # which original blocks went into each merged group
+            n_groups = max(1, min(total_patches, len(flat_blocks)))
+            counts = distribute_counts(n_groups, len(flat_blocks))
+            starts = [sum(counts[:k]) for k in range(len(counts))]
 
             blocks_to_process = []
 
-            for pts in merged:
+            for g_idx, pts in enumerate(merged):
+
+                if counts[g_idx] == 1:
+                    # a single block keeps its own dimensions
+                    su, sv = sizes[starts[g_idx]]
+                    blocks_to_process.append((pts, su, sv, 1, 1))
+                    continue
 
                 grid = find_grid_size(len(pts))
 
@@ -936,18 +915,11 @@ def surface():
                         )
                     })
 
-                size_u, size_v = grid
-
-                blocks_to_process.append(
-                    (pts, size_u, size_v, 1, 1)
-                )
+                blocks_to_process.append((pts, grid[0], grid[1], 1, 1))
 
         else:
 
-            per_block_targets = distribute_counts(
-                num_blocks,
-                total_patches
-            )
+            per_block_targets = distribute_counts(num_blocks, total_patches)
 
             blocks_to_process = []
 
@@ -955,39 +927,27 @@ def surface():
                 parsed,
                 per_block_targets
             ):
-
                 u, v = near_square_factors(max(1, block_target))
-
-                blocks_to_process.append(
-                    (pts, size_u, size_v, u, v)
-                )
+                blocks_to_process.append((pts, size_u, size_v, u, v))
 
         for pts, size_u, size_v, split_u, split_v in blocks_to_process:
-
             fit_block(
-                pts,
-                size_u,
-                size_v,
-                split_u,
-                split_v,
-                method,
-                results,
-                warnings
+                pts, size_u, size_v, split_u, split_v,
+                method, results, warnings
             )
 
         if not results:
             return jsonify({
                 "error": (
-                    "No valid surface could be fit from this file."
-                ),
+                    "No valid surface could be fit from this file. "
+                    + " ".join(warnings[:2])
+                ).strip(),
                 "warnings": warnings
             })
 
     print("Returned patches:", len(results))
 
-    response = {
-        "patches": results
-    }
+    response = {"patches": results}
 
     if warnings:
         response["warnings"] = warnings
@@ -996,7 +956,4 @@ def surface():
 
 
 if __name__ == "__main__":
-    app.run(
-        port=5000,
-        debug=True
-    )
+    app.run(port=5000, debug=True)
