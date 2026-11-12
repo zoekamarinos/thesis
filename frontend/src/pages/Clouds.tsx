@@ -1,17 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import {
-  Typography,
-  FormControlLabel,
-  Checkbox,
-  Button,
-} from "@mui/material";
+import { Typography, FormControlLabel, Checkbox } from "@mui/material";
 
 const API_BASE = "http://localhost:5000";
 
-const SHARP_EDGE_COLOR = 0xff6600;
-const SMOOTH_EDGE_COLOR = 0x00eaff;
+const EDGE_COLOR = 0xff6600;
 
 interface Patch {
   evalpts: number[][];
@@ -52,18 +46,9 @@ interface LayerObjects {
 type Side = "uStart" | "uEnd" | "vStart" | "vEnd";
 
 interface PatchInfo {
-  mesh: THREE.Mesh;
   sizeU: number;
   sizeV: number;
   evalpts: number[][];
-  originalNormals: Float32Array;
-}
-
-interface SharedEdge {
-  tube: THREE.Mesh;
-  smooth: boolean;
-  a: { patchIndex: number; side: Side; indices: number[] };
-  b: { patchIndex: number; side: Side; indices: number[] };
 }
 
 /*
@@ -277,7 +262,6 @@ export default function Clouds({
   });
 
   const patchInfosRef = useRef<(PatchInfo | null)[]>([]);
-  const sharedEdgesRef = useRef<SharedEdge[]>([]);
 
   const [totalPatches, setTotalPatches] = useState<string>("");
 
@@ -335,127 +319,6 @@ export default function Clouds({
 
   exportFunction.current = exportSurface;
 
-  // Set one shared edge's normal state, writing directly into both
-  // patches' live normal buffers. Applies immediately/synchronously.
-  const applyEdgeState = (edge: SharedEdge, smooth: boolean): void => {
-    const infoA = patchInfosRef.current[edge.a.patchIndex];
-    const infoB = patchInfosRef.current[edge.b.patchIndex];
-
-    if (!infoA || !infoB) return;
-
-    const normalAttrA = infoA.mesh.geometry.attributes
-      .normal as THREE.BufferAttribute;
-    const normalAttrB = infoB.mesh.geometry.attributes
-      .normal as THREE.BufferAttribute;
-
-    if (!smooth) {
-      // Restore each patch's own originally-computed normals.
-      edge.a.indices.forEach((idx) => {
-        normalAttrA.setXYZ(
-          idx,
-          infoA.originalNormals[idx * 3],
-          infoA.originalNormals[idx * 3 + 1],
-          infoA.originalNormals[idx * 3 + 2]
-        );
-      });
-
-      edge.b.indices.forEach((idx) => {
-        normalAttrB.setXYZ(
-          idx,
-          infoB.originalNormals[idx * 3],
-          infoB.originalNormals[idx * 3 + 1],
-          infoB.originalNormals[idx * 3 + 2]
-        );
-      });
-    } else {
-      // Average matched point pairs across the two patches so the
-      // shading is continuous across the seam.
-      const ptsA = edge.a.indices.map((idx) => toVec3(infoA.evalpts, idx));
-      const ptsB = edge.b.indices.map((idx) => toVec3(infoB.evalpts, idx));
-
-      const nearestB = (p: THREE.Vector3): number => {
-        let best = 0;
-        let bestDist = Infinity;
-        ptsB.forEach((q, k) => {
-          const d = p.distanceTo(q);
-          if (d < bestDist) {
-            bestDist = d;
-            best = k;
-          }
-        });
-        return best;
-      };
-
-      const nearestA = (p: THREE.Vector3): number => {
-        let best = 0;
-        let bestDist = Infinity;
-        ptsA.forEach((q, k) => {
-          const d = p.distanceTo(q);
-          if (d < bestDist) {
-            bestDist = d;
-            best = k;
-          }
-        });
-        return best;
-      };
-
-      edge.a.indices.forEach((idxA, kA) => {
-        const kB = nearestB(ptsA[kA]);
-        const idxB = edge.b.indices[kB];
-
-        const nA = new THREE.Vector3(
-          infoA.originalNormals[idxA * 3],
-          infoA.originalNormals[idxA * 3 + 1],
-          infoA.originalNormals[idxA * 3 + 2]
-        );
-        const nB = new THREE.Vector3(
-          infoB.originalNormals[idxB * 3],
-          infoB.originalNormals[idxB * 3 + 1],
-          infoB.originalNormals[idxB * 3 + 2]
-        );
-
-        const avg = nA.add(nB).normalize();
-
-        normalAttrA.setXYZ(idxA, avg.x, avg.y, avg.z);
-        normalAttrB.setXYZ(idxB, avg.x, avg.y, avg.z);
-      });
-
-      edge.b.indices.forEach((idxB, kB) => {
-        const kA = nearestA(ptsB[kB]);
-        const idxA = edge.a.indices[kA];
-
-        const nA = new THREE.Vector3(
-          infoA.originalNormals[idxA * 3],
-          infoA.originalNormals[idxA * 3 + 1],
-          infoA.originalNormals[idxA * 3 + 2]
-        );
-        const nB = new THREE.Vector3(
-          infoB.originalNormals[idxB * 3],
-          infoB.originalNormals[idxB * 3 + 1],
-          infoB.originalNormals[idxB * 3 + 2]
-        );
-
-        const avg = nA.add(nB).normalize();
-
-        normalAttrA.setXYZ(idxA, avg.x, avg.y, avg.z);
-        normalAttrB.setXYZ(idxB, avg.x, avg.y, avg.z);
-      });
-    }
-
-    normalAttrA.needsUpdate = true;
-    normalAttrB.needsUpdate = true;
-
-    edge.smooth = smooth;
-
-    (edge.tube.material as THREE.MeshBasicMaterial).color.setHex(
-      smooth ? SMOOTH_EDGE_COLOR : SHARP_EDGE_COLOR
-    );
-  };
-
-  const resetAllEdges = (): void => {
-    sharedEdgesRef.current.forEach((edge) => applyEdgeState(edge, false));
-  };
-
   useEffect(() => {
     let frameId: number | undefined;
     let renderer: THREE.WebGLRenderer | undefined;
@@ -466,7 +329,7 @@ export default function Clouds({
     let cancelled = false;
     const mountNode = mountRef.current;
 
-    const generate = async (): Promise<(() => void) | void> => {
+    const generate = async (): Promise<void> => {
       if (!mountRef.current || !file) {
         return;
       }
@@ -540,7 +403,6 @@ export default function Clouds({
       onPatchesChange?.(newPatches);
 
       patchInfosRef.current = new Array(newPatches.length).fill(null);
-      sharedEdgesRef.current = [];
 
       setLoading(false);
 
@@ -673,15 +535,10 @@ export default function Clouds({
 
           layersRef.current.model.push(mesh);
 
-          const normalAttr = geometry.attributes
-            .normal as THREE.BufferAttribute;
-
           patchInfosRef.current[index] = {
-            mesh,
             sizeU,
             sizeV,
             evalpts: p.evalpts,
-            originalNormals: new Float32Array(normalAttr.array),
           };
         } else {
           // Fallback: couldn't determine a grid, show points instead
@@ -761,21 +618,10 @@ export default function Clouds({
                   toVec3(infoA.evalpts, idx)
                 );
 
-                const tube = buildEdgeTube(
-                  tubePoints,
-                  edgeRadius,
-                  SHARP_EDGE_COLOR
-                );
+                const tube = buildEdgeTube(tubePoints, edgeRadius, EDGE_COLOR);
 
                 scene!.add(tube);
                 layersRef.current.edges.push(tube);
-
-                sharedEdgesRef.current.push({
-                  tube,
-                  smooth: false,
-                  a: { patchIndex: a, side: sideA, indices: idxA },
-                  b: { patchIndex: b, side: sideB, indices: idxB },
-                });
 
                 break;
               }
@@ -789,62 +635,6 @@ export default function Clouds({
       layersRef.current.model.forEach((o) => (o.visible = showModel));
       layersRef.current.edges.forEach((o) => (o.visible = showEdges));
 
-      // --- Click-to-toggle-edge handling ---
-
-      const raycaster = new THREE.Raycaster();
-      const pointer = new THREE.Vector2();
-      let downPos: { x: number; y: number } | null = null;
-
-      const handleEdgeClick = (event: PointerEvent): void => {
-        if (!renderer || !camera) return;
-
-        const rect = renderer.domElement.getBoundingClientRect();
-
-        pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-        raycaster.setFromCamera(pointer, camera);
-
-        const visibleEdges = sharedEdgesRef.current.filter(
-          (edge) => edge.tube.visible
-        );
-
-        const hits = raycaster.intersectObjects(
-          visibleEdges.map((e) => e.tube),
-          false
-        );
-
-        if (hits.length === 0) return;
-
-        const hitMesh = hits[0].object as THREE.Mesh;
-        const edge = sharedEdgesRef.current.find((e) => e.tube === hitMesh);
-
-        if (!edge) return;
-
-        applyEdgeState(edge, !edge.smooth);
-      };
-
-      const onPointerDown = (e: PointerEvent): void => {
-        downPos = { x: e.clientX, y: e.clientY };
-      };
-
-      const onPointerUp = (e: PointerEvent): void => {
-        if (!downPos) return;
-
-        const dx = e.clientX - downPos.x;
-        const dy = e.clientY - downPos.y;
-        const moved = Math.sqrt(dx * dx + dy * dy);
-
-        downPos = null;
-
-        if (moved > 5) return;
-
-        handleEdgeClick(e);
-      };
-
-      renderer.domElement.addEventListener("pointerdown", onPointerDown);
-      renderer.domElement.addEventListener("pointerup", onPointerUp);
-
       const animate = (): void => {
         frameId = requestAnimationFrame(animate);
         controls!.update();
@@ -853,27 +643,12 @@ export default function Clouds({
 
       animate();
 
-      return () => {
-        renderer?.domElement.removeEventListener(
-          "pointerdown",
-          onPointerDown
-        );
-        renderer?.domElement.removeEventListener("pointerup", onPointerUp);
-      };
     };
 
-    let removeListeners: (() => void) | void;
-
-    generate().then((cleanup) => {
-      removeListeners = cleanup;
-    });
+    generate();
 
     return () => {
       cancelled = true;
-
-      if (removeListeners) {
-        removeListeners();
-      }
 
       if (frameId !== undefined) {
         cancelAnimationFrame(frameId);
@@ -894,7 +669,6 @@ export default function Clouds({
         edges: [],
       };
 
-      sharedEdgesRef.current = [];
     };
     // Visibility toggles and onPatchesChange are intentionally left out:
     // changing them must not rebuild the whole scene.
@@ -990,10 +764,6 @@ export default function Clouds({
           label="Show edges"
         />
 
-        <Button size="small" variant="outlined" onClick={resetAllEdges}>
-          Reset edges
-        </Button>
-
         {loading && <span>Generating surface…</span>}
       </div>
 
@@ -1005,8 +775,7 @@ export default function Clouds({
           marginBottom: "8px",
         }}
       >
-        Orange edges join two patches with a sharp seam — click one to
-        smooth it. Cyan edges are smoothed — click to make sharp again.
+        Orange edges mark where two patches join.
       </Typography>
 
       {warnings.length > 0 && (
