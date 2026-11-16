@@ -190,7 +190,6 @@ function Chatbot({
                   border: isUser ? "none" : "1px solid #E2E8F0",
                 }}
               >
-                {/* FIXED: Replaced string display property with sx mapping configuration */}
                 <Typography
                   variant="caption"
                   sx={{
@@ -224,7 +223,6 @@ function Chatbot({
                 border: "1px solid #E2E8F0",
               }}
             >
-              {/* FIXED: Moved layout display to sx styles block inside loading sequence as well */}
               <Typography variant="caption" sx={{ display: "block", fontWeight: 700, color: "#0088FF", mb: 0.5 }}>
                 AI SYSTEM
               </Typography>
