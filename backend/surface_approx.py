@@ -5,13 +5,6 @@ import numpy as np
 import math
 import re
 
-try:
-    from sklearn.manifold import Isomap
-    from scipy.spatial.distance import pdist
-    REORDER_AVAILABLE = True
-except ImportError:
-    REORDER_AVAILABLE = False
-
 app = Flask(__name__)
 CORS(app)
 
@@ -21,8 +14,6 @@ DEGREE_V = 3
 ROW_LOOKAHEAD = 2
 ROW_TOL = 1e-6
 POLE_PAD_RADIUS_FRAC = 0.01
-GRID_ORDER_GOOD_ENOUGH = 0.45
-ISOMAP_NEIGHBOR_CANDIDATES = (10, 8, 12, 6, 14)
 MAX_AXIS = 80
 
 NUM_SPLIT = re.compile(r"[,\s;]+")
@@ -197,38 +188,6 @@ def split_into_grid_blocks(rows):
     return grids
 
 
-def grid_order_score(pts, size_u, size_v):
-    """Mean neighbour step size over overall spread. Lower means a cleaner grid."""
-
-    pts = np.asarray(pts, dtype=float)
-    grid = pts.reshape(size_u, size_v, 3)
-    du = np.linalg.norm(grid[1:, :, :] - grid[:-1, :, :], axis=-1)
-    dv = np.linalg.norm(grid[:, 1:, :] - grid[:, :-1, :], axis=-1)
-    scale = pdist(pts).mean()
-    if scale <= 0:
-        return 0.0
-    return float((du.mean() + dv.mean()) / 2 / scale)
-
-
-def grids_quality(grids):
-    """Return (fraction of points in usable grids, worst order score)."""
-
-    total = sum(len(g[0]) for g in grids) or 1
-    usable = [g for g in grids if g[1] >= 3 and g[2] >= 3]
-    frac = sum(len(g[0]) for g in usable) / total
-
-    if not usable or not REORDER_AVAILABLE:
-        return frac, 0.0
-
-    worst = 0.0
-    for flat, su, sv in usable:
-        try:
-            worst = max(worst, grid_order_score(flat, su, sv))
-        except Exception:
-            pass
-    return frac, worst
-
-
 def auto_grid_blocks(pts, warnings=None):
     if len(pts) < 2:
         return [(pts, 1, len(pts))]
@@ -236,11 +195,11 @@ def auto_grid_blocks(pts, warnings=None):
     rows = normalize_rows(group_rows_auto(pts))
     grids = split_into_grid_blocks(rows)
 
-    if not REORDER_AVAILABLE:
-        return grids
+    # Warn if under half the points ended up in usable (3 x 3 or larger) grids
+    total = sum(len(g[0]) for g in grids) or 1
+    usable = sum(len(g[0]) for g in grids if g[1] >= 3 and g[2] >= 3)
 
-    frac, score = grids_quality(grids)
-    if (frac < 0.5 or score > GRID_ORDER_GOOD_ENOUGH) and warnings is not None:
+    if usable / total < 0.5 and warnings is not None:
         warnings.append(
             "The points don't form a clear grid (rows of equal length "
             "listed in order), so the surface may be distorted. Check "
@@ -248,69 +207,6 @@ def auto_grid_blocks(pts, warnings=None):
         )
 
     return grids
-
-
-def reorder_via_isomap(pts, size_u, size_v, n_neighbors):
-    """Recover a row-major ordering from point geometry using a 2D Isomap embedding."""
-
-    pts = np.asarray(pts, dtype=float)
-    embedding = Isomap(n_neighbors=n_neighbors, n_components=2).fit_transform(pts)
-
-    order_u = np.argsort(embedding[:, 0])
-    groups = np.array_split(order_u, size_u)
-
-    reordered_idx = []
-    for g in groups:
-        reordered_idx.extend(g[np.argsort(embedding[g, 1])].tolist())
-
-    return pts[reordered_idx]
-
-
-def fix_grid_order(pts, size_u, size_v, warnings=None, label=""):
-    """Keep the given order if it looks like a grid, otherwise try Isomap reordering."""
-
-    pts_arr = [[float(c) for c in p] for p in pts]
-
-    if not REORDER_AVAILABLE or size_u < 2 or size_v < 2:
-        return pts_arr
-
-    try:
-        original_score = grid_order_score(pts_arr, size_u, size_v)
-    except Exception:
-        return pts_arr
-
-    if original_score <= GRID_ORDER_GOOD_ENOUGH:
-        return pts_arr
-
-    best_pts, best_score = pts_arr, original_score
-
-    for nn in ISOMAP_NEIGHBOR_CANDIDATES:
-        if nn >= len(pts_arr):
-            continue
-        try:
-            candidate = reorder_via_isomap(pts_arr, size_u, size_v, nn)
-            candidate_score = grid_order_score(candidate, size_u, size_v)
-        except Exception:
-            continue
-
-        if candidate_score < best_score:
-            best_score, best_pts = candidate_score, candidate.tolist()
-
-    if best_score < original_score:
-        if warnings is not None:
-            warnings.append(
-                f"{label}points weren't in grid order -- "
-                f"re-ordered automatically from point geometry"
-            )
-        return best_pts
-
-    if warnings is not None:
-        warnings.append(
-            f"{label}points don't look like a clean "
-            f"{size_u}x{size_v} grid and automatic re-ordering didn't "
-            f"confidently fix it -- results may be distorted"
-        )
-    return pts_arr
 
 
 # ---------------------------------------------------------------------
@@ -346,28 +242,6 @@ def parse_coordinate_line(line):
         return None
 
     return values
-
-
-def strip_index_column(rows):
-    """Reduce rows to x, y, z, dropping a running index column if present."""
-
-    if not rows:
-        return rows
-
-    has_index = (
-        len(rows) >= 4
-        and all(len(r) >= 4 for r in rows)
-        and all(
-            abs(r[0] - (rows[0][0] + k)) < 1e-9
-            for k, r in enumerate(rows)
-        )
-        and rows[0][0] in (0.0, 1.0)
-    )
-
-    if has_index:
-        return [r[1:4] for r in rows]
-
-    return [r[:3] for r in rows]
 
 
 def parse_points(text, warnings=None):
@@ -429,13 +303,11 @@ def parse_points(text, warnings=None):
 
     flush()
 
-    marker_blocks = [
-        (strip_index_column(b), d) for b, d in marker_blocks
-    ]
+    marker_blocks = [([r[:3] for r in b], d) for b, d in marker_blocks]
 
     grids = []
 
-    for i, (block_pts, dims) in enumerate(marker_blocks):
+    for block_pts, dims in marker_blocks:
         if dims:
             size_u, size_v = dims
 
@@ -443,11 +315,7 @@ def parse_points(text, warnings=None):
                 # Stated size doesn't match the point count: detect instead
                 grids.extend(auto_grid_blocks(block_pts, warnings=warnings))
             else:
-                label = f"patch {i + 1}: " if len(marker_blocks) > 1 else ""
-                fixed_pts = fix_grid_order(
-                    block_pts, size_u, size_v, warnings=warnings, label=label
-                )
-                grids.append((fixed_pts, size_u, size_v))
+                grids.append((block_pts, size_u, size_v))
         else:
             grids.extend(auto_grid_blocks(block_pts, warnings=warnings))
 
@@ -615,50 +483,6 @@ def split_grid(pts, size_u, size_v, patches_u, patches_v):
     return subgrids
 
 
-def merge_blocks(blocks, total_groups):
-
-    n = len(blocks)
-    total_groups = max(1, min(total_groups, n))
-
-    base = n // total_groups
-    extra = n % total_groups
-
-    groups = []
-    idx = 0
-
-    for g in range(total_groups):
-
-        take = base + (1 if g < extra else 0)
-        merged = []
-
-        for _ in range(take):
-            merged.extend(blocks[idx])
-            idx += 1
-
-        groups.append(merged)
-
-    return groups
-
-
-def find_grid_size(n):
-    """Find a near-square u x v factorisation of n (used after merging blocks)."""
-
-    best = None
-    diff = float("inf")
-
-    for i in range(2, int(math.sqrt(n)) + 1):
-
-        if n % i == 0:
-
-            j = n // i
-
-            if abs(i - j) < diff:
-                best = (i, j)
-                diff = abs(i - j)
-
-    return best
-
-
 # ---------------------------------------------------------------------
 # Fitting
 # ---------------------------------------------------------------------
@@ -698,21 +522,6 @@ def safe_ctrlpts_size(data_size, degree):
     """Control points to request: half the data size, but at least degree + 1."""
 
     return max(degree + 1, min(data_size, data_size // 2))
-
-
-def fit_is_sane(surf, data_pts):
-    """Reject fits with non-finite values or control points far outside the data."""
-
-    ctrl = np.asarray(surf.ctrlpts, dtype=float)
-    data = np.asarray(data_pts, dtype=float)
-
-    if not np.isfinite(ctrl).all():
-        return False
-
-    diag = float(np.linalg.norm(np.ptp(data, axis=0))) or 1.0
-    lo, hi = data.min(axis=0) - 3 * diag, data.max(axis=0) + 3 * diag
-
-    return bool(((ctrl >= lo) & (ctrl <= hi)).all())
 
 
 def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
@@ -762,9 +571,6 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
             else:
                 surf = fitting.interpolate_surface(fit_pts, fit_u, fit_v, du, dv)
 
-            if not fit_is_sane(surf, sub_pts):
-                raise ValueError("fit was numerically unstable")
-
         except Exception as exc:
             surf = None
 
@@ -774,8 +580,6 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
                     surf = fitting.interpolate_surface(
                         fit_pts, fit_u, fit_v, du, dv
                     )
-                    if not fit_is_sane(surf, sub_pts):
-                        surf = None
                 except Exception:
                     surf = None
 
@@ -874,48 +678,13 @@ def surface():
 
         num_blocks = len(parsed)
 
-        if total_patches is None:
+        # Counts at or below the detected number of blocks are ignored
+        if total_patches is None or total_patches <= num_blocks:
 
             blocks_to_process = [
                 (pts, size_u, size_v, 1, 1)
                 for pts, size_u, size_v in parsed
             ]
-
-        elif total_patches <= num_blocks:
-
-            flat_blocks = [pts for pts, _, _ in parsed]
-            sizes = [(su, sv) for _, su, sv in parsed]
-            merged = merge_blocks(flat_blocks, max(1, total_patches))
-
-            # which original blocks went into each merged group
-            n_groups = max(1, min(total_patches, len(flat_blocks)))
-            counts = distribute_counts(n_groups, len(flat_blocks))
-            starts = [sum(counts[:k]) for k in range(len(counts))]
-
-            blocks_to_process = []
-
-            for g_idx, pts in enumerate(merged):
-
-                if counts[g_idx] == 1:
-                    # a single block keeps its own dimensions
-                    su, sv = sizes[starts[g_idx]]
-                    blocks_to_process.append((pts, su, sv, 1, 1))
-                    continue
-
-                grid = find_grid_size(len(pts))
-
-                if not grid:
-                    return jsonify({
-                        "error": (
-                            "Merging these blocks down to "
-                            f"{total_patches} patch(es) doesn't "
-                            "produce a point count that forms a "
-                            "rectangular grid. Try a different "
-                            "patch count."
-                        )
-                    })
-
-                blocks_to_process.append((pts, grid[0], grid[1], 1, 1))
 
         else:
 

@@ -264,6 +264,7 @@ export default function Clouds({
   const patchInfosRef = useRef<(PatchInfo | null)[]>([]);
 
   const [totalPatches, setTotalPatches] = useState<string>("");
+  const [autoCount, setAutoCount] = useState<number>(0);
 
   const [showCloud, setShowCloud] = useState<boolean>(true);
   const [showControl, setShowControl] = useState<boolean>(true);
@@ -318,6 +319,21 @@ export default function Clouds({
   };
 
   exportFunction.current = exportSurface;
+
+  // Step the patch count from the current value (or the auto count while
+  // the box is blank). It can't go below the auto-detected count.
+  const stepPatches = (delta: number): void => {
+    const parsed = parseInt(totalPatches, 10);
+    const current = Number.isNaN(parsed) ? autoCount : parsed;
+    setTotalPatches(String(Math.max(autoCount, current + delta)));
+  };
+
+  const clampPatches = (): void => {
+    const parsed = parseInt(totalPatches, 10);
+    if (!Number.isNaN(parsed) && parsed < autoCount) {
+      setTotalPatches(String(autoCount));
+    }
+  };
 
   useEffect(() => {
     let frameId: number | undefined;
@@ -400,6 +416,9 @@ export default function Clouds({
       }
 
       patchesRef.current = newPatches;
+      if (totalPatches.trim() === "") {
+        setAutoCount(newPatches.length);
+      }
       onPatchesChange?.(newPatches);
 
       patchInfosRef.current = new Array(newPatches.length).fill(null);
@@ -675,6 +694,12 @@ export default function Clouds({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, file, totalPatches]);
 
+  // A new file has its own auto count, so start again from auto
+  useEffect(() => {
+    setTotalPatches("");
+    setAutoCount(0);
+  }, [file]);
+
   useEffect(() => {
     layersRef.current.cloud.forEach((o) => (o.visible = showCloud));
   }, [showCloud]);
@@ -712,17 +737,37 @@ export default function Clouds({
           Number of patches:
         </Typography>
 
+        <button
+          type="button"
+          onClick={() => stepPatches(-1)}
+          disabled={
+            autoCount === 0 ||
+            (totalPatches !== "" && parseInt(totalPatches, 10) <= autoCount)
+          }
+        >
+          −
+        </button>
+
         <input
           type="number"
-          min={1}
-          placeholder="auto"
+          min={autoCount || 1}
+          placeholder={autoCount > 0 ? `auto (${autoCount})` : "auto"}
           value={totalPatches}
           onChange={(e) => setTotalPatches(e.target.value)}
+          onBlur={clampPatches}
           style={{
             marginLeft: "6px",
-            width: "70px",
+            width: "90px",
           }}
         />
+
+        <button
+          type="button"
+          onClick={() => stepPatches(1)}
+          disabled={autoCount === 0}
+        >
+          +
+        </button>
 
         <FormControlLabel
           control={
