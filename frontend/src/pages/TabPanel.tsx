@@ -71,10 +71,8 @@ function a11yProps(index: number) {
   };
 }
 
-/*
- * Calculates the Euclidean distance between
- * two 3D points.
- */
+// Returns the straight-line distance between two 3D points. 
+// It is used to compare the two surfaces point by point.
 function pointDistance(a: number[], b: number[]): number {
   if (a.length < 3 || b.length < 3) {
     return 0;
@@ -87,9 +85,8 @@ function pointDistance(a: number[], b: number[]): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/*
- * Distance from one point to the nearest of a set of points.
- */
+// Finds the distance from one point to the closest point in a list. 
+// It checks every point in the list and keeps the smallest squared distance.
 function nearestDistance(point: number[], targets: number[][]): number {
   let best = Infinity;
 
@@ -106,11 +103,8 @@ function nearestDistance(point: number[], targets: number[][]): number {
   return Math.sqrt(best);
 }
 
-/*
- * How far a fitted surface is from the ORIGINAL data points: for each
- * data point, the distance to the nearest point sampled on the fitted
- * surface, summarised as mean / RMSE / max.
- */
+// Measures how well fitted surface matches original data. 
+// For every data point it finds the nearest point on the surface
 function fitError(patches: Patch[]): FitError {
   let count = 0;
   let sum = 0;
@@ -142,18 +136,8 @@ function fitError(patches: Patch[]): FitError {
   };
 }
 
-/*
- * Compare approximation and interpolation.
- *
- * 1. Each fit is measured against the original data points.
- * 2. The two sampled surfaces are compared with each other. Both are
- *    sampled on the same grid of surface positions, so the nth sample
- *    of one corresponds to the nth sample of the other.
- *
- * Control points are NOT compared directly: approximation uses far
- * fewer control points than interpolation, so they don't correspond.
- * Only their counts are reported.
- */
+// Builds the full set of results for the error panel. 
+// fitError is run on approximation and interpolation and compares the two surfaces point by point giving their mean, RMSE and maximum difference.
 function calculateErrorAnalysis(
   approximate: Patch[],
   interpolate: Patch[]
@@ -295,11 +279,6 @@ export default function TabPanel({ file, exportFunction }: TabPanelProps) {
           onPatchesChange={setInterpolatePatches}
         />
       </CustomTabPanel>
-
-      {/* =====================================================
-          MANUAL MATHEMATICAL ERROR ANALYSIS
-          ===================================================== */}
-
       <Box
         className="analysis-card"
         sx={{
@@ -423,11 +402,6 @@ export default function TabPanel({ file, exportFunction }: TabPanelProps) {
           </Box>
         )}
       </Box>
-
-      {/* =====================================================
-          AI ANALYSIS
-          ===================================================== */}
-
       <Box
         className="analysis-card"
         sx={{

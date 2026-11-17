@@ -18,17 +18,13 @@ MAX_AXIS = 80
 
 NUM_SPLIT = re.compile(r"[,\s;]+")
 
-
+# If it contains # NURBS PATCH it is read as an existing NURBS file otherwise it is read as a plain point cloud.
 def parse_file(text, warnings=None):
     if "# NURBS PATCH" in text:
         return parse_nurbs(text), True
     return parse_points(text, warnings=warnings), False
 
-
-# ---------------------------------------------------------------------
-# Row / grid detection
-# ---------------------------------------------------------------------
-
+# Splits a flat, ordered list of points into rows. Structured files are turned into grids (all points where one axis is the same becomes a row)
 def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
     """Split an ordered point list into rows by finding which axis stays constant."""
 
@@ -95,7 +91,7 @@ def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
 
     return rows
 
-
+# Checks whether a row repeats its own first point. If it does, the row has identical loops back to back so it is split at each repeat.
 def split_repeated_loops(row):
     """Split a row that repeats its own first point into separate loops."""
 
@@ -119,7 +115,8 @@ def split_repeated_loops(row):
         for a, b in zip(split_points[:-1], split_points[1:])
     ]
 
-
+# Turns a single pole point into a tiny ring as wide as the neighbouring row, by nudging copies of the point slightly toward each neighbour point. 
+# This avoids a row of identical points, which would make the surface fit unstable.
 def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
     """Turn a single pole point into a tiny ring matching its neighbour row."""
 
@@ -134,7 +131,7 @@ def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
         for (nx, ny, nz) in neighbor_row
     ]
 
-
+# Cleans the raw rows before they are grouped. It splits repeated loops, drops a row that exactly duplicates the one before it, and pads single-point rows using pad_pole_row.
 def normalize_rows(rows):
     """Split repeated loops, drop duplicate rows and pad single-point pole rows."""
 
@@ -162,7 +159,8 @@ def normalize_rows(rows):
 
     return cleaned
 
-
+# Groups consecutive rows of the same width into rectangular blocks. 
+# When the row width changes, a new block starts eg. Sphere followed by a cylinder gets separated into two patches automatically.
 def split_into_grid_blocks(rows):
     """Group consecutive rows of equal width into (points, size_u, size_v) blocks."""
 
@@ -187,7 +185,8 @@ def split_into_grid_blocks(rows):
 
     return grids
 
-
+# The automatic grid detector for blocks without stated dimensions. 
+# It finds rows, cleans them and groups them into blocks. Adds a warning when the points don’t form a clear grid.
 def auto_grid_blocks(pts, warnings=None):
     if len(pts) < 2:
         return [(pts, 1, len(pts))]
@@ -208,11 +207,8 @@ def auto_grid_blocks(pts, warnings=None):
 
     return grids
 
-
-# ---------------------------------------------------------------------
-# File parsing
-# ---------------------------------------------------------------------
-
+# Reads one line of the file as numbers. 
+# It accepts commas, spaces, tabs or semicolons, an OBJ-style leading v, and extra columns.
 def parse_coordinate_line(line):
     """Read one line as numbers. Returns None for headers, comments and faces."""
 
@@ -243,7 +239,8 @@ def parse_coordinate_line(line):
 
     return values
 
-
+# Reads a whole point-cloud file into grid blocks. 
+# A block with stated dimensions that match its point count goes through fix_grid_order. Any other block goes through auto_grid_blocks.
 def parse_points(text, warnings=None):
     """
     Parse a point-cloud file into (points, size_u, size_v) grid blocks.
@@ -321,7 +318,7 @@ def parse_points(text, warnings=None):
 
     return grids
 
-
+# Reads a NURBS file into patches. For each patch it collects the degrees, sizes, control points and knot vectors.
 def parse_nurbs(text):
     patches = []
 
@@ -393,11 +390,8 @@ def parse_nurbs(text):
 
     return patches
 
-
-# ---------------------------------------------------------------------
-# Patch splitting and merging
-# ---------------------------------------------------------------------
-
+# Splits a number into two factors that are as close to equal as possible, such as 12 into 4×3. 
+# It is used to decide how to cut a block into a grid of sub-patches.
 def near_square_factors(n):
 
     if n <= 1:
@@ -418,7 +412,8 @@ def near_square_factors(n):
 
     return best
 
-
+# Shares a total across n slots as evenly as possible, giving the extra to the first slots. 
+# For example, 7 across 3 gives 3, 2, 2.
 def distribute_counts(n, total):
 
     base = total // n
@@ -429,7 +424,8 @@ def distribute_counts(n, total):
         for i in range(n)
     ]
 
-
+# Works out where to cut one axis of a grid into n pieces. 
+# It returns the start and end index of each piece, spreading any leftover cells across the first pieces.
 def split_indices(size, n):
 
     total_cells = size - 1
@@ -456,7 +452,8 @@ def split_indices(size, n):
 
     return bounds
 
-
+# Cuts a grid of points into sub-grids using split_indices on both axes. 
+# Neighbouring sub-grids share their boundary points, so the fitted patches meet along the same data.
 def split_grid(pts, size_u, size_v, patches_u, patches_v):
     """Cut a grid into sub-grids that share their boundary points."""
 
@@ -482,11 +479,7 @@ def split_grid(pts, size_u, size_v, patches_u, patches_v):
 
     return subgrids
 
-
-# ---------------------------------------------------------------------
-# Fitting
-# ---------------------------------------------------------------------
-
+# Sends data to frontend. It includes the evaluated surface points, data points, control points, etc.
 def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
 
     curves = construct.extract_curves(surf)
@@ -517,13 +510,14 @@ def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
         "vCurvePts": curves["v"][0].evalpts
     }
 
-
+# Chooses how many control points to ask for along one axis when approximating.
 def safe_ctrlpts_size(data_size, degree):
     """Control points to request: half the data size, but at least degree + 1."""
 
     return max(degree + 1, min(data_size, data_size // 2))
 
-
+# Fits all the surfaces for one block. It splits the block into sub-patches and thins any that are larger than 80 points along an axis.
+#  It then approximates or interpolates each one.
 def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
     """Fit and append surfaces for one grid block, skipping any that fail."""
 
@@ -608,7 +602,8 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
             )
         )
 
-
+# The main endpoint. It reads the uploaded file, the fitting method and the optional patch count. NURBS files are rebuilt directly. 
+# Point clouds are parsed into blocks, then merged or split to match the requested patch count and passed to fit_block.
 @app.route("/surface", methods=["POST"])
 def surface():
 
@@ -723,6 +718,6 @@ def surface():
 
     return jsonify(response)
 
-
+# Main function
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

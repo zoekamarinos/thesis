@@ -45,6 +45,7 @@ function Chatbot({
   const hasInterp = interpolatePatches.length > 0;
   const bothAvailable = hasApprox && hasInterp;
 
+  // Makes a POST request to the backend server to send a message to the AI with the message and data attached.
   const handleChatSubmit = async (): Promise<void> => {
     if (!prompt.trim()) {
       alert("Please enter a question.");

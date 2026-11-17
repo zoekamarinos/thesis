@@ -51,10 +51,8 @@ interface PatchInfo {
   evalpts: number[][];
 }
 
-/*
- * Fallback grid-size finder, mirrors the backend's find_grid_size,
- * used only if sample_size_u/v weren't sent (e.g. stale server).
- */
+// Finds two whole numbers that multiply to a given point count and are as close together as possible, to guess a grid’s rows and columns. 
+// Used when server doesn’t say how big the sampled grid is.
 function findGridSize(n: number): [number, number] | null {
   let best: [number, number] | null = null;
   let diff = Infinity;
@@ -72,6 +70,7 @@ function findGridSize(n: number): [number, number] | null {
   return best;
 }
 
+// Returns the straight-line distance between two 3D points.
 function dist3(a: number[], b: number[]): number {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
@@ -79,16 +78,8 @@ function dist3(a: number[], b: number[]): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/*
- * Decides whether a patch's v direction wraps all the way around
- * (e.g. a full revolution in azimuth, like a sphere, cylinder, or any
- * other "generalized cylinder" surface) rather than being a
- * genuinely open edge (e.g. a flat rectangular patch). Compares the
- * gap between the last and first column against the typical gap
- * between any other two adjacent columns -- a true wraparound closes
- * with roughly the same step size as every other seam, while a
- * genuinely open edge is normally many times wider than that.
- */
+// Decides whether a surface wraps all the way around or has an open edge. 
+// It compares the gap between the last and first column of points and treats small values as completely closed in.
 function isClosedInV(pts: number[][], sizeU: number, sizeV: number): boolean {
   if (sizeV < 3) return false;
 
@@ -113,13 +104,8 @@ function isClosedInV(pts: number[][], sizeU: number, sizeV: number): boolean {
   return typicalAvg > 0 && wrapAvg <= typicalAvg * 2.5;
 }
 
-/*
- * Plain smooth-shaded surface mesh from a row-major (u then v) point
- * grid — one vertex per grid point, standard averaged normals.
- * Vertex index for grid point (i, j) is always i*sizeV + j, which is
- * relied on elsewhere to map boundary rows/columns straight onto the
- * normal buffer without any extra lookup table.
- */
+// Turns the grid of surface points into a 3D mesh by joining each group of four neighbouring points with two triangles. 
+// If the surface wraps around it also joins the last column back to the first.
 function buildSurfaceGeometry(
   pts: number[][],
   sizeU: number,
@@ -146,14 +132,6 @@ function buildSurfaceGeometry(
     }
   }
 
-  // Close the seam between the last column and the first, for
-  // surfaces that wrap all the way around (e.g. a full revolution in
-  // azimuth). Without this, the loop above only ever connects column
-  // j to column j+1 and never wraps back to column 0 -- every such
-  // surface rendered with exactly one missing strip, which is why it
-  // showed up on every object (sphere, cylinder, bone) regardless of
-  // shape: it was never about the geometry, it was this one seam
-  // never being drawn.
   if (isClosedInV(pts, sizeU, sizeV)) {
     for (let i = 0; i < sizeU - 1; i++) {
       const a = i * sizeV + (sizeV - 1);
@@ -172,10 +150,8 @@ function buildSurfaceGeometry(
   return geometry;
 }
 
-/*
- * Vertex indices (into evalpts / the normal buffer) along one of a
- * patch's 4 outer boundaries, in a consistent walking order.
- */
+// Returns the positions of the points along one of a patch’s four edges. 
+// These are used to find edges that two patches share.
 function boundaryIndices(sizeU: number, sizeV: number, side: Side): number[] {
   const out: number[] = [];
 
@@ -192,16 +168,14 @@ function boundaryIndices(sizeU: number, sizeV: number, side: Side): number[] {
   return out;
 }
 
+// Looks up a point by its index and returns it as a ThreeJS vector.
 function toVec3(evalpts: number[][], index: number): THREE.Vector3 {
   const p = evalpts[index];
   return new THREE.Vector3(p[0], p[1], p[2]);
 }
 
-/*
- * Combined bounding-box diagonal across every patch's sampled points,
- * used to scale both the edge-tube radius and the boundary-matching
- * tolerance to the model's real-world size.
- */
+// Builds the box that encloses every surface, control and data point from all the patches. 
+// It is used to centre the camera on the model.
 function computeBoundingBox(patches: Patch[]): THREE.Box3 {
   const box = new THREE.Box3();
 
@@ -216,6 +190,8 @@ function computeBoundingBox(patches: Patch[]): THREE.Box3 {
   return box;
 }
 
+// Returns the length of that box’s diagonal, which is the model’s overall size. 
+// Camera distance, point size and edge-tube thickness are all scaled from it.
 function computeBoundingDiagonal(patches: Patch[]): number {
   const box = computeBoundingBox(patches);
 
@@ -230,6 +206,8 @@ function computeBoundingDiagonal(patches: Patch[]): number {
   return size.length() || 1;
 }
 
+// Draws a smooth tube along a list of points, using a curve through them. 
+// It is used to highlight the shared edge between two patches.
 function buildEdgeTube(
   points: THREE.Vector3[],
   radius: number,
@@ -275,6 +253,7 @@ export default function Clouds({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Writes every patch’s degrees, control points and knot vectors into a text file and downloads it as surface_export.txt
   const exportSurface = (): void => {
     if (patchesRef.current.length === 0) {
       return;
@@ -345,6 +324,8 @@ export default function Clouds({
     let cancelled = false;
     const mountNode = mountRef.current;
 
+    // This is the main routine. It sends the file and patch count to the backend. 
+    // It then builds the scene with the surface meshes, control points, data points and edges.
     const generate = async (): Promise<void> => {
       if (!mountRef.current || !file) {
         return;
@@ -586,7 +567,6 @@ export default function Clouds({
       });
 
       // --- Detect boundaries shared between patches, draw one tube per join ---
-
       const diag = computeBoundingDiagonal(newPatches);
       const tolerance = diag * 0.02;
       const edgeRadius = THREE.MathUtils.clamp(
@@ -689,9 +669,7 @@ export default function Clouds({
       };
 
     };
-    // Visibility toggles and onPatchesChange are intentionally left out:
-    // changing them must not rebuild the whole scene.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Visibility toggles and onPatchesChange are intentionally left out
   }, [method, file, totalPatches]);
 
   // A new file has its own auto count, so start again from auto
