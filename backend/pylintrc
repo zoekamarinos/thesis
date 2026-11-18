@@ -1,0 +1,15 @@
+[MASTER]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# Style rules that don't catch bugs; real errors and warnings still fail the check
+disable=
+    missing-module-docstring,
+    missing-function-docstring,
+    too-many-locals,
+    too-many-branches,
+    too-many-arguments,
+    too-many-positional-arguments,
+    broad-exception-caught,
+    global-statement,
+    exec-used
