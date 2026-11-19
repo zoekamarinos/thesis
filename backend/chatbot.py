@@ -45,7 +45,7 @@ def _nearest_neighbor_deviations(data_points, eval_points):
 
     return np.concatenate(mins)
 
-# Turns those distances into a summary for one patch: 
+# Turns those distances into a summary for one patch:
 # the number of points, RMSE, mean error, maximum deviation, standard deviation and variance.
 def error_report(data_points, eval_points, label=""):
     deviations = _nearest_neighbor_deviations(data_points, eval_points)
@@ -68,9 +68,9 @@ def count_ctrlpts(patch_list):
     """Total control points across a list of patches."""
     return sum(len(p.get("ctrlpts", [])) for p in patch_list)
 
-# Runs error_report on every patch in one fit 
-# (approximate or interpolate) and combines the results. 
-# It returns the per-patch reports, the patch count, the total control points, 
+# Runs error_report on every patch in one fit
+# (approximate or interpolate) and combines the results.
+# It returns the per-patch reports, the patch count, the total control points,
 # and an overall RMSE and maximum deviation for the whole fit.
 def patch_error_summary(patches, label=""):
     per_patch = [
@@ -102,8 +102,8 @@ def patch_error_summary(patches, label=""):
         )
     return overall
 
-# Compares the approximate fit with the interpolate fit. 
-# It builds a summary for each, then reports which one has the lower RMSE, 
+# Compares the approximate fit with the interpolate fit.
+# It builds a summary for each, then reports which one has the lower RMSE,
 # which has the lower maximum deviation, and which uses fewer control points.
 def compare_fits(approximate_patches, interpolate_patches):
     approx_summary = patch_error_summary(approximate_patches or [], label="approximate")
@@ -138,7 +138,7 @@ def compare_fits(approximate_patches, interpolate_patches):
         "more_efficient_by_ctrlpts": _pick_better(a_ctrl, i_ctrl),
     }
 
-# Runs analysis code written by the AI against actual patch data. 
+# Runs analysis code written by the AI against actual patch data.
 # The code can use numpy, pandas and the helpers above and must return a result.
 def run_python_analysis_sandbox(code_string: str) -> str:
     """Run analysis code written by the model against the full patch arrays."""
@@ -255,8 +255,8 @@ SYSTEM_PROMPT = (
     "could compute exactly."
 )
 
-# The chatbot’s endpoint. It receives the question and both sets of patches, 
-# stores the patches for the sandbox, and sends the question to the AI 
+# The chatbot’s endpoint. It receives the question and both sets of patches,
+# stores the patches for the sandbox, and sends the question to the AI
 # with the system prompt and the sandbox tool.
 @app.route("/analyze-control-points", methods=["POST"])
 def analyze_control_points():
