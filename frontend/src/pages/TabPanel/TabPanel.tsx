@@ -4,8 +4,9 @@ import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import Clouds from "./Clouds";
-import Chatbot from "./Chatbot";
+import Clouds from "../Clouds/Clouds";
+import Chatbot from "../Chatbot/Chatbot";
+import "./TabPanel.css";
 
 interface Patch {
   evalpts: number[][];
@@ -176,9 +177,6 @@ function calculateErrorAnalysis(
   };
 }
 
-/*
- * One labelled value in the analysis grid.
- */
 function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <Box
@@ -216,9 +214,7 @@ function formatNumber(value: number): string {
 
 export default function TabPanel({ file, exportFunction }: TabPanelProps) {
   const [value, setValue] = useState<number>(0);
-
   const [approximatePatches, setApproximatePatches] = useState<Patch[]>([]);
-
   const [interpolatePatches, setInterpolatePatches] = useState<Patch[]>([]);
 
   const handleChange = (_: React.SyntheticEvent, newValue: number) => {
@@ -226,9 +222,7 @@ export default function TabPanel({ file, exportFunction }: TabPanelProps) {
   };
 
   const hasApprox = approximatePatches.length > 0;
-
   const hasInterp = interpolatePatches.length > 0;
-
   const bothAvailable = hasApprox && hasInterp;
 
   const errorAnalysis = useMemo(
@@ -241,7 +235,6 @@ export default function TabPanel({ file, exportFunction }: TabPanelProps) {
 
   return (
     <Box sx={{ width: "100%" }}>
-      {/* ALGORITHM TABS */}
       <Tabs
         value={value}
         onChange={handleChange}
@@ -256,7 +249,6 @@ export default function TabPanel({ file, exportFunction }: TabPanelProps) {
         }}
       >
         <Tab label="Approximation" {...a11yProps(0)} />
-
         <Tab label="Interpolation" {...a11yProps(1)} />
       </Tabs>
 

@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import "./Dash.css";
-import logo from "../assets/small-logo1.svg";
-import TabPanel from "./TabPanel";
+import logo from "../../assets/small-logo1.svg";
+import TabPanel from "../TabPanel/TabPanel";
 import { useNavigate } from "react-router-dom";
 
 export default function Dash() {

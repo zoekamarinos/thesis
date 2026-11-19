@@ -1,6 +1,6 @@
 import { Box, Typography } from '@mui/material';
 import "./Home.css";
-import logo from "../assets/logo.svg";
+import logo from "../../assets/logo.svg";
 import { useNavigate } from 'react-router-dom';
 
 export default function Home() {

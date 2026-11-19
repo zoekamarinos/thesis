@@ -1,0 +1,24 @@
+.clouds-tools {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.patch-input {
+  margin-left: 6px;
+  width: 90px;
+}
+
+.clouds-warnings {
+  color: #b36b00;
+  margin-bottom: 8px;
+  margin-left: 6px;
+  font-size: 13px;
+}
+
+.clouds-error {
+  color: #ff6b6b;
+  margin-bottom: 8px;
+}

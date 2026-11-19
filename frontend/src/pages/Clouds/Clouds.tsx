@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Typography, FormControlLabel, Checkbox } from "@mui/material";
+import "./Clouds.css";
 
 const API_BASE = "http://localhost:5000";
 
@@ -202,7 +203,6 @@ function computeBoundingDiagonal(patches: Patch[]): number {
   const size = new THREE.Vector3();
   box.getSize(size);
 
-  // Guard against degenerate (zero-size) clouds
   return size.length() || 1;
 }
 
@@ -215,7 +215,6 @@ function buildEdgeTube(
 ): THREE.Mesh {
   const curve = new THREE.CatmullRomCurve3(points, false, "centripetal");
   const segments = Math.max(points.length - 1, 2);
-
   const geometry = new THREE.TubeGeometry(curve, segments, radius, 6, false);
   const material = new THREE.MeshBasicMaterial({ color });
 
@@ -229,9 +228,7 @@ export default function Clouds({
   onPatchesChange,
 }: CloudsProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-
   const patchesRef = useRef<Patch[]>([]);
-
   const layersRef = useRef<LayerObjects>({
     cloud: [],
     control: [],
@@ -267,7 +264,6 @@ export default function Clouds({
       output += `degree_v=${p.degree_v}\n`;
       output += `size_u=${p.size_u}\n`;
       output += `size_v=${p.size_v}\n\n`;
-
       output += "ctrlpts\n";
 
       p.ctrlpts.forEach((pt) => {
@@ -276,7 +272,6 @@ export default function Clouds({
 
       output += "\nknotvector_u\n";
       output += p.knot_u.join(",") + "\n";
-
       output += "\nknotvector_v\n";
       output += p.knot_v.join(",") + "\n\n";
     });
@@ -286,14 +281,11 @@ export default function Clouds({
     });
 
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
 
     link.href = url;
     link.download = "surface_export.txt";
-
     link.click();
-
     URL.revokeObjectURL(url);
   };
 
@@ -475,7 +467,6 @@ export default function Clouds({
         );
 
         scene!.add(points);
-
         return points;
       };
 
@@ -493,7 +484,6 @@ export default function Clouds({
         );
 
         scene!.add(line);
-
         return line;
       };
 
@@ -566,7 +556,7 @@ export default function Clouds({
         }
       });
 
-      // --- Detect boundaries shared between patches, draw one tube per join ---
+      // Detect boundary edges that two patches share and draw a tube along them
       const diag = computeBoundingDiagonal(newPatches);
       const tolerance = diag * 0.02;
       const edgeRadius = THREE.MathUtils.clamp(
@@ -643,7 +633,6 @@ export default function Clouds({
       animate();
 
     };
-
     generate();
 
     return () => {
@@ -697,13 +686,7 @@ export default function Clouds({
   return (
     <div>
       <div
-        style={{
-          display: "flex",
-          gap: "16px",
-          alignItems: "center",
-          marginBottom: "8px",
-          flexWrap: "wrap",
-        }}
+        className="clouds-tools"
       >
         <Typography
           variant="h6"
@@ -733,10 +716,7 @@ export default function Clouds({
           value={totalPatches}
           onChange={(e) => setTotalPatches(e.target.value)}
           onBlur={clampPatches}
-          style={{
-            marginLeft: "6px",
-            width: "90px",
-          }}
+          className="patch-input"
         />
 
         <button
@@ -786,7 +766,6 @@ export default function Clouds({
           }
           label="Show edges"
         />
-
         {loading && <span>Generating surface…</span>}
       </div>
 
@@ -803,12 +782,7 @@ export default function Clouds({
 
       {warnings.length > 0 && (
         <div
-          style={{
-            color: "#b36b00",
-            marginBottom: "8px",
-            marginLeft: "6px",
-            fontSize: 13,
-          }}
+          className="clouds-warnings"
         >
           {warnings.map((w, i) => (
             <div key={i}>⚠ {w}</div>
@@ -818,10 +792,7 @@ export default function Clouds({
 
       {error && (
         <div
-          style={{
-            color: "#ff6b6b",
-            marginBottom: "8px",
-          }}
+          className="clouds-error"
         >
           {error}
         </div>
