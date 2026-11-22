@@ -28,8 +28,6 @@ def parse_file(text, warnings=None):
 # Splits a flat, ordered list of points into rows. Structured files are turned into grids (all points where
 # one axis is the same becomes a row)
 def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
-    """Split an ordered point list into rows by finding which axis stays constant."""
-
     n = len(pts)
 
     # An axis that never changes in the whole cloud carries no row information
@@ -96,8 +94,6 @@ def group_rows_auto(pts, tol=ROW_TOL, lookahead=ROW_LOOKAHEAD):
 # Checks whether a row repeats its own first point. If it does, the row has identical loops back to back so
 # it is split at each repeat.
 def split_repeated_loops(row):
-    """Split a row that repeats its own first point into separate loops."""
-
     if len(row) < 2:
         return [row]
 
@@ -122,8 +118,6 @@ def split_repeated_loops(row):
 # slightly toward each neighbour point.
 # This avoids a row of identical points, which would make the surface fit unstable.
 def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
-    """Turn a single pole point into a tiny ring matching its neighbour row."""
-
     px, py, pz = pole_point
 
     return [
@@ -138,8 +132,6 @@ def pad_pole_row(pole_point, neighbor_row, radius_frac=POLE_PAD_RADIUS_FRAC):
 # Cleans the raw rows before they are grouped. It splits repeated loops, drops a row that exactly duplicates
 # the one before it, and pads single-point rows using pad_pole_row.
 def normalize_rows(rows):
-    """Split repeated loops, drop duplicate rows and pad single-point pole rows."""
-
     expanded = []
     for row in rows:
         expanded.extend(split_repeated_loops(row))
@@ -168,8 +160,6 @@ def normalize_rows(rows):
 # When the row width changes, a new block starts eg. Sphere followed by a cylinder gets separated into two
 # patches automatically.
 def split_into_grid_blocks(rows):
-    """Group consecutive rows of equal width into (points, size_u, size_v) blocks."""
-
     blocks = []
     current_rows = [rows[0]]
 
@@ -217,8 +207,6 @@ def auto_grid_blocks(pts, warnings=None):
 # Reads one line of the file as numbers.
 # It accepts commas, spaces, tabs or semicolons, an OBJ-style leading v, and extra columns.
 def parse_coordinate_line(line):
-    """Read one line as numbers. Returns None for headers, comments and faces."""
-
     if line.startswith("#") or line.startswith("//"):
         return None
 
@@ -250,12 +238,6 @@ def parse_coordinate_line(line):
 # A block whose stated dimensions match its point count is used as given. Any other block goes through
 # auto_grid_blocks.
 def parse_points(text, warnings=None):
-    """
-    Parse a point-cloud file into (points, size_u, size_v) grid blocks.
-    A block starts at "# PATCH" (optionally "# PATCH size_u=N size_v=M")
-    or at the start of the file.
-    """
-
     marker_blocks = []
     current = []
     current_dims = None
@@ -402,7 +384,6 @@ def parse_nurbs(text):
 # Splits a number into two factors that are as close to equal as possible, such as 12 into 4×3.
 # It is used to decide how to cut a block into a grid of sub-patches.
 def near_square_factors(n):
-
     if n <= 1:
         return (1, 1)
 
@@ -424,7 +405,6 @@ def near_square_factors(n):
 # Shares a total across n slots as evenly as possible, giving the extra to the first slots.
 # For example, 7 across 3 gives 3, 2, 2.
 def distribute_counts(n, total):
-
     base = total // n
     extra = total % n
 
@@ -436,7 +416,6 @@ def distribute_counts(n, total):
 # Works out where to cut one axis of a grid into n pieces.
 # It returns the start and end index of each piece, spreading any leftover cells across the first pieces.
 def split_indices(size, n):
-
     total_cells = size - 1
 
     if total_cells <= 0:
@@ -464,8 +443,6 @@ def split_indices(size, n):
 # Cuts a grid of points into sub-grids using split_indices on both axes.
 # Neighbouring sub-grids share their boundary points, so the fitted patches meet along the same data.
 def split_grid(pts, size_u, size_v, patches_u, patches_v):
-    """Cut a grid into sub-grids that share their boundary points."""
-
     u_bounds = split_indices(size_u, patches_u)
     v_bounds = split_indices(size_v, patches_v)
 
@@ -490,7 +467,6 @@ def split_grid(pts, size_u, size_v, patches_u, patches_v):
 
 # Sends data to frontend. It includes the evaluated surface points, data points, control points, etc.
 def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
-
     curves = construct.extract_curves(surf)
 
     return {
@@ -521,15 +497,11 @@ def surface_json(surf, datapts, index, data_size_u=None, data_size_v=None):
 
 # Chooses how many control points to ask for along one axis when approximating.
 def safe_ctrlpts_size(data_size, degree):
-    """Control points to request: half the data size, but at least degree + 1."""
-
     return max(degree + 1, min(data_size, data_size // 2))
 
 # Fits all the surfaces for one block. It splits the block into sub-patches and thins any that are larger
 # than 80 points along an axis. It then approximates or interpolates each one.
 def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
-    """Fit and append surfaces for one grid block, skipping any that fail."""
-
     for sub_pts, sub_u, sub_v in split_grid(pts, size_u, size_v, split_u, split_v):
 
         du = min(DEGREE_U, sub_u - 1)
@@ -616,7 +588,6 @@ def fit_block(pts, size_u, size_v, split_u, split_v, method, results, warnings):
 # requested patch count (counts at or below the number of blocks are ignored) and passed to fit_block.
 @app.route("/surface", methods=["POST"])
 def surface():
-
     file = request.files.get("file")
     method = request.form.get("method", "approximate")
 

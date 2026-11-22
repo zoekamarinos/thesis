@@ -27,8 +27,6 @@ ACTIVE_DATASET = {}
 
 # For each of the original data points, it finds the distance to the closest point on the fitted surface.
 def _nearest_neighbor_deviations(data_points, eval_points):
-    """Distance from each data point to its nearest evaluated surface point."""
-
     data = np.asarray(data_points, dtype=float)
     evals = np.asarray(eval_points, dtype=float)
 
@@ -141,8 +139,6 @@ def compare_fits(approximate_patches, interpolate_patches):
 # Runs analysis code written by the AI against actual patch data.
 # The code can use numpy, pandas and the helpers above and must return a result.
 def run_python_analysis_sandbox(code_string: str) -> str:
-    """Run analysis code written by the model against the full patch arrays."""
-
     scope = {
         "approximate_patches": ACTIVE_DATASET.get("approximatePatches", []),
         "interpolate_patches": ACTIVE_DATASET.get("interpolatePatches", []),
